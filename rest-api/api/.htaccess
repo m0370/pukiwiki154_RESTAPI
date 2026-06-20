@@ -1,0 +1,24 @@
+# REST API URL 書き換えルール
+# /rest-api/api/v1/pages/FrontPage → /rest-api/api/v1/index.php (PATH_INFO 経由)
+
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /rest-api/api/v1/
+
+    # 実在するファイル・ディレクトリはそのまま
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    # それ以外は index.php へ
+    RewriteRule ^ index.php [L,QSA]
+</IfModule>
+
+# data/ ディレクトリへの直接アクセスを拒否
+<IfModule mod_authz_core.c>
+    <FilesMatch "\.(sqlite|sqlite3|gz|sql)$">
+        Require all denied
+    </FilesMatch>
+</IfModule>

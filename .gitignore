@@ -1,0 +1,19 @@
+# ランタイムデータ（機密・環境依存）
+rest-api/data/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# SQLite（念のため data/ 外に生成された場合も除外）
+*.sqlite
+*.sqlite3
+
+# PHP キャッシュ
+*.cache
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+*~
