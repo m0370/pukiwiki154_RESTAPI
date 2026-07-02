@@ -1,5 +1,8 @@
 # ランタイムデータ（機密・環境依存）
 rest-api/data/
+rest-api-v2/data/*
+!rest-api-v2/data/keys.php.example
+!rest-api-v2/data/.htaccess
 
 # macOS
 .DS_Store

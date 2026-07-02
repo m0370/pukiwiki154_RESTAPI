@@ -1,0 +1,20 @@
+# PukiWiki REST API v2 — トップレベル保護ルール
+#
+# data/ 以下（APIキー・スナップショット・監査ログ）は絶対に配信しない。
+# （data/.htaccess にも deny があり二重防御。bootstrap が自動生成する）
+
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # data/ 以下への直接アクセスを 403 で拒否
+    RewriteRule ^data(/|$) - [F,L]
+</IfModule>
+
+# mod_rewrite が無い環境向けのフォールバック:
+# 機密拡張子はどこにあっても配信しない
+<IfModule mod_authz_core.c>
+    <FilesMatch "\.(jsonl|gz|lock)$">
+        Require all denied
+    </FilesMatch>
+</IfModule>

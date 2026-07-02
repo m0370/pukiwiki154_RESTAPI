@@ -1,0 +1,26 @@
+# REST API v2 URL 書き換えルール
+#
+# /rest-api-v2/api/v1/pages/FrontPage → v1/index.php
+# RewriteBase 不要（ディレクトリ相対のルールのみ使用）のため、
+# PukiWiki がサブディレクトリに設置されていても動作する。
+
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Authorization ヘッダを PHP へ引き継ぐ（CGI/FastCGI 環境対策）。
+    # 環境によっては REDIRECT_HTTP_AUTHORIZATION として渡る（Auth 側で両方参照する）。
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # 実在するファイル・ディレクトリ以外は v1/index.php へ
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^v1/ v1/index.php [L,QSA]
+</IfModule>
+
+# 注意: PHP を CGI/FastCGI で動かしていて上記でも Authorization が届かない場合は
+# Apache 2.4.13+ で「CGIPassAuth On」をこのファイルに追記すること。
+# （古い Apache では未知のディレクティブとして 500 になるためデフォルトでは無効）
