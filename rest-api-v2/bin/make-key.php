@@ -14,6 +14,8 @@
  *
  * 環境変数:
  *   PKWK_API_KEYS  keys.php のパス（省略時: rest-api-v2/data/keys.php）
+ *
+ * License: GPL v2 or (at your option) any later version（PukiWiki 1.5.4 本体に準拠）
  * @version v2.0
  */
 declare(strict_types=1);

@@ -15,6 +15,8 @@
  *
  * {page} は階層ページ名（親/子/孫）をそのまま受け付ける。
  * 例: GET /rest-api-v2/api/v1/pages/講演/2026年
+ *
+ * License: GPL v2 or (at your option) any later version（PukiWiki 1.5.4 本体に準拠）
  * @version v2.0
  */
 

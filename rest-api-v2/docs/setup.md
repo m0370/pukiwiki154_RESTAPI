@@ -1,7 +1,8 @@
 # PukiWiki REST API v2 — セットアップガイド
 
 > **対象**: PukiWiki 1.5.4 / PHP 8.1+  
-> **方式**: ファイルのみ（SQLite 等の DB は使わない）。正本は従来通り `wiki/*.txt`
+> **方式**: ファイルのみ（SQLite 等の DB は使わない）。正本は従来通り `wiki/*.txt`  
+> **ライセンス**: GPL v2 or (at your option) any later version（PukiWiki 本体に準拠）
 
 ---
 

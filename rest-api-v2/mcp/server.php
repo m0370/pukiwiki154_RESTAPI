@@ -21,6 +21,8 @@
  *
  * このサーバーは wiki_write_page（直接編集）を公開する。
  * 編集させたくないページは PukiWiki の凍結機能で保護すること。
+ *
+ * License: GPL v2 or (at your option) any later version（PukiWiki 1.5.4 本体に準拠）
  * @version v2.0
  */
 

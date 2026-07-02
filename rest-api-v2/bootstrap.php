@@ -30,6 +30,8 @@
  *
  * 注意: 本番はローカルFS上で運用すること。iCloud/NFS等の同期フォルダでは
  *       flock/rename の保証が失われる。
+ *
+ * License: GPL v2 or (at your option) any later version（PukiWiki 1.5.4 本体に準拠）
  * @version v2.0
  */
 
