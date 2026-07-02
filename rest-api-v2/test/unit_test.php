@@ -187,6 +187,17 @@ ok(sha1($content) === $revs[0]['sha1'], 'スナップショット本文の sha1 
 $dup = $REST_SNAPSHOTS->saveIfNew('テスト/ページ1', $content);
 ok($dup === null, '同一内容は重複保存されない');
 
+// zlib 無効環境のフォールバック形式（非圧縮 .txt）も一覧・読み出しできる
+$plain_body = "非圧縮スナップショットのテスト本文\n";
+$plain_sha1 = sha1($plain_body);
+$plain_id   = '100.000000_' . $plain_sha1;
+$plain_dir  = $REST_DATA_DIR . '/snapshots/' . strtoupper(bin2hex('テスト/ページ1'));
+file_put_contents($plain_dir . '/' . $plain_id . '.txt', $plain_body);
+$revs2 = $REST_SNAPSHOTS->list('テスト/ページ1');
+ok(in_array($plain_id, array_column($revs2, 'id'), true), '非圧縮 .txt スナップショットが一覧に載る');
+ok($REST_SNAPSHOTS->read('テスト/ページ1', $plain_id) === $plain_body, '非圧縮 .txt スナップショットを読み出せる');
+ok($REST_SNAPSHOTS->saveIfNew('テスト/ページ1', $plain_body) === null, '非圧縮形式でも同一内容は重複保存されない');
+
 expect_api_error(fn() => $REST_SNAPSHOTS->read('テスト/ページ1', '../../etc/passwd'), 400, '不正な revision id は 400');
 expect_api_error(fn() => $REST_SNAPSHOTS->read('テスト/ページ1', '999_' . str_repeat('0', 40)), 400, '旧形式の revision id は 400');
 expect_api_error(fn() => $REST_SNAPSHOTS->read('テスト/ページ1', '999.000000_' . str_repeat('0', 40)), 404, '未存在 revision は 404');

@@ -12,6 +12,8 @@ declare(strict_types=1);
  *   - ファイル名に内容の sha1 を含む（重複排除・改ざん検証が可能）
  *   - 同一 sha1 のスナップショットが既にあれば保存しない（冪等）
  *   - unlink は行わない（追記専用）
+ *   - zlib 拡張が無い環境（共有ホスティング等）では非圧縮の .txt で保存する。
+ *     読み出しは両形式に対応するため、途中で zlib を有効化/無効化しても混在できる
  * @version v2.0
  */
 final class SnapshotStore
@@ -31,24 +33,33 @@ final class SnapshotStore
             throw new \RuntimeException("Cannot create snapshot dir: {$pdir}");
         }
 
-        // 重複排除: 同じ sha1 のスナップショットが既にあればスキップ
-        if (glob($pdir . '/*_' . $sha1 . '.txt.gz') !== []) {
+        // 重複排除: 同じ sha1 のスナップショットが既にあればスキップ（.txt.gz / .txt 両対応）
+        if (glob($pdir . '/*_' . $sha1 . '.txt') !== []
+            || glob($pdir . '/*_' . $sha1 . '.txt.gz') !== []) {
             return null;
         }
 
         $tod = gettimeofday();
         $id  = sprintf('%d.%06d_%s', $tod['sec'], $tod['usec'], $sha1);
-        $gz  = gzencode($content, 6);
-        if ($gz === false) {
-            throw new \RuntimeException("gzencode failed for page={$page}");
+
+        if (function_exists('gzencode')) {
+            $data = gzencode($content, 6);
+            if ($data === false) {
+                throw new \RuntimeException("gzencode failed for page={$page}");
+            }
+            $ext = '.txt.gz';
+        } else {
+            // zlib 無効環境では非圧縮で保存する
+            $data = $content;
+            $ext  = '.txt';
         }
 
         // temp → rename の原子的書き込み
         $tmp = $pdir . '/.tmp_' . bin2hex(random_bytes(6));
-        if (file_put_contents($tmp, $gz, LOCK_EX) === false) {
+        if (file_put_contents($tmp, $data, LOCK_EX) === false) {
             throw new \RuntimeException("snapshot write failed: {$tmp}");
         }
-        if (!rename($tmp, $pdir . '/' . $id . '.txt.gz')) {
+        if (!rename($tmp, $pdir . '/' . $id . $ext)) {
             @unlink($tmp);
             throw new \RuntimeException("snapshot rename failed: {$id}");
         }
@@ -67,8 +78,8 @@ final class SnapshotStore
         }
 
         $items = [];
-        foreach (glob($pdir . '/*.txt.gz') ?: [] as $path) {
-            $name = basename($path, '.txt.gz');
+        foreach (array_merge(glob($pdir . '/*.txt.gz') ?: [], glob($pdir . '/*.txt') ?: []) as $path) {
+            $name = preg_replace('/\.txt(\.gz)?$/', '', basename($path));
             if (!preg_match('/^(\d+)\.(\d{6})_([0-9a-f]{40})$/', $name, $m)) {
                 continue;
             }
@@ -94,17 +105,26 @@ final class SnapshotStore
         if (!preg_match('/^\d+\.\d{6}_([0-9a-f]{40})$/', $id, $m)) {
             throw new \ApiException(400, 'Invalid revision id format', 'invalid_revision_id');
         }
-        $path = $this->pageDir($page) . '/' . $id . '.txt.gz';
-        if (!is_file($path)) {
+        $base = $this->pageDir($page) . '/' . $id;
+        $path = is_file($base . '.txt.gz') ? $base . '.txt.gz'
+              : (is_file($base . '.txt')   ? $base . '.txt' : null);
+        if ($path === null) {
             throw new \ApiException(404, "Revision '{$id}' not found", 'revision_not_found');
         }
-        $gz = file_get_contents($path);
-        if ($gz === false) {
+        $raw = file_get_contents($path);
+        if ($raw === false) {
             throw new \RuntimeException("Cannot read snapshot: {$path}");
         }
-        $content = gzdecode($gz);
-        if ($content === false) {
-            throw new \RuntimeException("gzdecode failed: {$id}");
+        if (str_ends_with($path, '.gz')) {
+            if (!function_exists('gzdecode')) {
+                throw new \RuntimeException("zlib extension required to read gzip snapshot: {$id}");
+            }
+            $content = gzdecode($raw);
+            if ($content === false) {
+                throw new \RuntimeException("gzdecode failed: {$id}");
+            }
+        } else {
+            $content = $raw;
         }
         if (sha1($content) !== $m[1]) {
             throw new \RuntimeException("Snapshot integrity check failed: {$id}");

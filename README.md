@@ -36,7 +36,7 @@ page_write() 経由        ← Web UI と同一の副作用（diff/backup/Recent
 
 | 要件 | 内容 |
 |------|------|
-| PHP | 8.1 以上（`zlib` 拡張のみ。DB 拡張は不要） |
+| PHP | 8.1 以上（DB 拡張は不要。`zlib` 拡張は推奨 — 無い環境ではスナップショットが非圧縮 `.txt` で保存される） |
 | Web サーバー | Apache（`mod_rewrite` + `AllowOverride All`）推奨。なくても PATH_INFO 形式で動作 |
 | PukiWiki | 1.5.4（UTF-8 版で動作確認） |
 | ファイルシステム | **ローカル FS 必須**。iCloud / Dropbox / NFS 等の同期フォルダでは flock・rename の保証が失われるため運用不可 |
