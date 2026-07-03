@@ -59,10 +59,32 @@ function rest_parse_path(array $req): string
     return '/' . ltrim(rawurldecode($uri), '/');
 }
 
-/** JSON リクエストボディを取得 */
+/**
+ * raw JSON ボディの上限（bytes）。PKWK_REST_MAX_JSON_BYTES で上書き可。
+ * 既定は max(8MB, 本文上限×8 + 64KB)。\uXXXX エスケープで日本語本文は数倍に膨張するため
+ * raw 側は緩めに通し、厳密な本文サイズは PageStore::write() 側で検査する。
+ */
+function rest_max_json_bytes(): int
+{
+    $env = getenv('PKWK_REST_MAX_JSON_BYTES');
+    if ($env !== false && ctype_digit($env) && (int)$env > 0) {
+        return (int)$env;
+    }
+    return max(8 * 1024 * 1024, PageStore::maxBodyBytes() * 8 + 65536);
+}
+
+/** JSON リクエストボディを取得（上限超過は 413） */
 function rest_json_body(): array
 {
-    $raw = (string)file_get_contents('php://input');
+    $limit = rest_max_json_bytes();
+    $raw   = (string)file_get_contents('php://input', length: $limit + 1);
+    if (strlen($raw) > $limit) {
+        throw new ApiException(
+            413,
+            "Request body exceeds the maximum size ({$limit} bytes).",
+            'payload_too_large'
+        );
+    }
     if ($raw === '') {
         return [];
     }
@@ -120,8 +142,9 @@ $router->get('/search', function () use ($auth): Response {
 
 // GET /pages/{page}/revisions — API書き込みスナップショットの一覧
 $router->get('/pages/{page...}/revisions', function (array $vars) use ($auth): Response {
-    global $REST_REQUEST, $REST_SNAPSHOTS;
+    global $REST_REQUEST, $REST_SNAPSHOTS, $REST_PAGES;
     $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $REST_PAGES->assertReadable($vars['page']);
 
     $revs = $REST_SNAPSHOTS->list($vars['page']);
     return Response::ok([
@@ -135,8 +158,9 @@ $router->get('/pages/{page...}/revisions', function (array $vars) use ($auth): R
 
 // GET /pages/{page}/revisions/{rev} — 過去版の本文取得
 $router->get('/pages/{page...}/revisions/{rev}', function (array $vars) use ($auth): Response {
-    global $REST_REQUEST, $REST_SNAPSHOTS;
+    global $REST_REQUEST, $REST_SNAPSHOTS, $REST_PAGES;
     $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $REST_PAGES->assertReadable($vars['page']);
 
     $content = $REST_SNAPSHOTS->read($vars['page'], $vars['rev']);
     return Response::ok([

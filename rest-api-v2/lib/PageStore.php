@@ -9,7 +9,7 @@ require_once __DIR__ . '/Audit.php';
  * ページの読み書き（ファイルのみ・正本は wiki/*.txt）。
  *
  * 書き込みは必ず次の順序で行う:
- *   1. 入力検証（ページ名・空本文・保護ページ・READONLY）
+ *   1. 入力検証（ページ名・空本文・サイズ上限・保護ページ・READONLY）
  *   2. flock によるロック取得（data/locks/、リトライ付き）
  *   3. CAS: 現在ファイルの sha1 == base_sha1 でなければ 409
  *   4. is_freeze() / is_editable() チェック（PukiWiki ロード時）
@@ -22,12 +22,19 @@ require_once __DIR__ . '/Audit.php';
  *
  * 空本文は 400 で拒否する（page_write() の空本文＝ページ削除挙動を防ぐ）。
  * 削除 API は提供しない（削除・凍結・リネームは Web UI の管理操作で行う）。
+ *
+ * 読み取りにも PukiWiki 本体の閲覧認可を適用する:
+ *   - ':' 始まりのシステムページは read も 403（write と対称）
+ *   - $read_auth による閲覧制限ページは read/revisions が 403、検索からは除外
  * @version v2.0
  */
 final class PageStore
 {
     /** sha1('') — 新規ページ作成時に base_sha1 として渡すセンチネル */
     public const EMPTY_SHA1 = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+
+    /** ページ本文の既定上限（bytes）。PKWK_REST_MAX_BODY_BYTES で上書き可 */
+    public const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 
     /** ロック取得のリトライ（200ms × 10 = 最大約 2 秒） */
     private const LOCK_RETRIES  = 10;
@@ -55,6 +62,7 @@ final class PageStore
     public function read(string $page): array
     {
         $this->validatePageName($page);
+        $this->assertReadable($page);
         $file = $this->filePath($page);
         if (!is_file($file)) {
             throw new ApiException(404, "Page '{$page}' not found", 'page_not_found');
@@ -106,6 +114,11 @@ final class PageStore
     {
         $results = [];
         foreach ($this->scanPages() as $page => $file) {
+            // 閲覧不可ページは本文を読む前に黙って除外する（本体 search プラグインと同じ挙動。
+            // ここで assertReadable() を使うと1ページの閲覧不可で検索全体が 403 になるため使わない）
+            if (!$this->canRead($page)) {
+                continue;
+            }
             $name_hit = mb_stripos($page, $query, 0, 'UTF-8') !== false;
 
             $content = file_get_contents($file);
@@ -135,6 +148,51 @@ final class PageStore
             }
         }
         return $results;
+    }
+
+    // -------------------------------------------------------------------------
+    // 閲覧認可
+    // -------------------------------------------------------------------------
+
+    /** 閲覧不可なら 403 を投げる（read・revisions 用。検索のフィルタには canRead() を使う） */
+    public function assertReadable(string $page): void
+    {
+        if ($this->canRead($page)) {
+            return;
+        }
+        if (str_starts_with($page, ':')) {
+            throw new ApiException(
+                403,
+                "System pages (starting with ':') cannot be read via API.",
+                'system_page'
+            );
+        }
+        throw new ApiException(
+            403,
+            "Page '{$page}' is not readable (protected by read authentication).",
+            'read_forbidden'
+        );
+    }
+
+    /**
+     * 閲覧可否の判定（例外を投げない）。$read_auth 無効のサイトでは常に true。
+     *
+     * check_readable() は使わないこと: 認可 NG の経路が pkwk_common_headers() →
+     * pkwk_headers_sent() を通り、既に出力があると die() する（MCP の stdio や
+     * レスポンス送出後の API を巻き込んで落とす）。副作用のない判定本体
+     * _is_page_accessible()（lib/auth.php）を直接使う。
+     */
+    private function canRead(string $page): bool
+    {
+        if (str_starts_with($page, ':')) {
+            return false;
+        }
+        if (!empty($GLOBALS['read_auth'])
+            && function_exists('_is_page_accessible')
+            && !_is_page_accessible($page, $GLOBALS['read_auth_pages'] ?? [])) {
+            return false;
+        }
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -180,6 +238,17 @@ final class PageStore
                 'Empty content is not allowed (it would delete the page). ' .
                 'Page deletion must be done from the PukiWiki web UI.',
                 'empty_content'
+            );
+        }
+
+        // 本文サイズ上限（REST・MCP の両経路に効かせるためここで検査する）
+        $max_body = self::maxBodyBytes();
+        if (strlen($new_body) > $max_body) {
+            throw new ApiException(
+                413,
+                "Content exceeds the maximum page size ({$max_body} bytes). " .
+                'Set PKWK_REST_MAX_BODY_BYTES to change the limit.',
+                'content_too_large'
             );
         }
 
@@ -304,6 +373,16 @@ final class PageStore
         }
     }
 
+    /** ページ本文の上限（bytes）。raw JSON 上限の算出（api/v1/index.php）にも使う */
+    public static function maxBodyBytes(): int
+    {
+        $env = getenv('PKWK_REST_MAX_BODY_BYTES');
+        if ($env !== false && ctype_digit($env) && (int)$env > 0) {
+            return (int)$env;
+        }
+        return self::DEFAULT_MAX_BODY_BYTES;
+    }
+
     // -------------------------------------------------------------------------
     // ページ名・パス
     // -------------------------------------------------------------------------
@@ -372,7 +451,7 @@ final class PageStore
                 continue;
             }
             // ':' 始まりのシステムページ（:config 等）は一覧・検索に出さない
-            // （PukiWiki 本体のページ一覧と同じ挙動。直接 read は可能）
+            // （PukiWiki 本体のページ一覧と同じ挙動。直接 read も assertReadable() が拒否する）
             if (str_starts_with($page, ':')) {
                 continue;
             }

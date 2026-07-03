@@ -81,6 +81,7 @@ final class Response
             404     => 'not_found',
             405     => 'method_not_allowed',
             409     => 'conflict',
+            413     => 'payload_too_large',
             423     => 'locked',
             500     => 'internal_error',
             default => 'error',

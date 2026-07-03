@@ -24,9 +24,12 @@
  *
  * 環境変数:
  *   PKWK_ROOT             PukiWiki ルート（省略時は rest-api-v2/ の親を自動検出）
- *   PKWK_REST_DATA        データディレクトリの上書き（テスト用）
+ *   PKWK_REST_DATA        データディレクトリの上書き（標準は DocRoot 外を推奨）
  *   PKWK_API_KEYS         keys.php のパス上書き
  *   PKWK_PROTECTED_PAGES  保護ページの JSON 配列（例 '["FrontPage","MenuBar"]'）
+ *   PKWK_REST_ALLOW_DOCROOT_DATA=1
+ *                         データディレクトリが DocRoot 内でも起動を許可する
+ *                         （data/ への HTTP アクセスが 403 になることを確認済みの場合のみ）
  *
  * 注意: 本番はローカルFS上で運用すること。iCloud/NFS等の同期フォルダでは
  *       flock/rename の保証が失われる。
@@ -153,6 +156,50 @@ if (!is_file($rest_data_ht)) {
         '</IfModule>',
         '',
     ]));
+}
+
+/**
+ * データディレクトリが Web に露出し得るか（Web SAPI かつ DocRoot 配下なら true）。
+ *
+ * .htaccess による deny が有効かどうか（AllowOverride 設定）は外部から検出できないため、
+ * サーバー種別（Apache/nginx）では判定しない。Web SAPI で DocRoot 内なら一律 true。
+ * 判定は PHP_SAPI === 'cli' の完全一致であること（php -S は 'cli-server' であり、
+ * 前方一致にすると組み込みサーバーでガードが無効になってしまう）。
+ */
+function rest_data_dir_is_exposed(string $data_dir, array $server, string $sapi): bool
+{
+    if ($sapi === 'cli') {
+        return false; // CLI（MCP・make-key・テスト）は HTTP 配信されない
+    }
+    $doc_root = (string)($server['DOCUMENT_ROOT'] ?? '');
+    if ($doc_root === '') {
+        return false;
+    }
+    $data_real = realpath($data_dir);
+    $root_real = realpath($doc_root);
+    if ($data_real === false || $root_real === false) {
+        return false;
+    }
+    return $data_real === $root_real
+        || str_starts_with($data_real . '/', rtrim($root_real, '/') . '/');
+}
+
+// DocRoot 内の data/ は .htaccess が効かない環境（nginx / php -S / AllowOverride None）で
+// keys.php・監査ログ・スナップショットが丸見えになるため、明示許可がない限り起動を拒否する。
+// この時点では Response/ApiException が未読込（require はセクション4）なので、クラス非依存で返す。
+if (rest_data_dir_is_exposed($REST_DATA_DIR, $_SERVER, PHP_SAPI)
+    && getenv('PKWK_REST_ALLOW_DOCROOT_DATA') !== '1') {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['error' => [
+        'status'  => 500,
+        'code'    => 'insecure_data_dir',
+        'message' => 'REST data directory is inside the web document root. '
+            . 'Move it outside with PKWK_REST_DATA (recommended), or set '
+            . 'PKWK_REST_ALLOW_DOCROOT_DATA=1 only after verifying that HTTP access '
+            . 'to data/ is denied (returns 403).',
+    ]], JSON_UNESCAPED_SLASHES);
+    exit;
 }
 
 // -------------------------------------------------------------------------

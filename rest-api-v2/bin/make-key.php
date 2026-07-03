@@ -13,7 +13,9 @@
  *   php make-key.php --revoke my-editor
  *
  * 環境変数:
- *   PKWK_API_KEYS  keys.php のパス（省略時: rest-api-v2/data/keys.php）
+ *   PKWK_API_KEYS   keys.php のパス（最優先）
+ *   PKWK_REST_DATA  データディレクトリ（bootstrap と同じ値を設定すれば keys.php の
+ *                   場所が Web 側と一致する。省略時: rest-api-v2/data）
  *
  * License: GPL v2 or (at your option) any later version（PukiWiki 1.5.4 本体に準拠）
  * @version v2.0
@@ -25,7 +27,8 @@ if (php_sapi_name() !== 'cli') {
     exit('CLI only');
 }
 
-$keys_file = getenv('PKWK_API_KEYS') ?: dirname(__DIR__) . '/data/keys.php';
+$keys_file = getenv('PKWK_API_KEYS')
+    ?: (getenv('PKWK_REST_DATA') ?: dirname(__DIR__) . '/data') . '/keys.php';
 
 // ---- 引数解析 -------------------------------------------------------------
 $args = array_slice($argv, 1);

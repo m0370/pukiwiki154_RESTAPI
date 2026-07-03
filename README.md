@@ -47,19 +47,40 @@ page_write() 経由        ← Web UI と同一の副作用（diff/backup/Recent
 # 1. PukiWiki ルート直下に配置（wiki/ や pukiwiki.ini.php と同じ階層）
 cp -r rest-api-v2 /var/www/pukiwiki/
 
-# 2. data/ に Web サーバーの書き込み権限を付与
-chown -R www-data:www-data /var/www/pukiwiki/rest-api-v2/data
-chmod 750 /var/www/pukiwiki/rest-api-v2/data
+# 2. データディレクトリ（キー・監査ログ・スナップショット）を DocRoot の外に作成【標準】
+mkdir -p /var/lib/pukiwiki-rest/data
+chown -R www-data:www-data /var/lib/pukiwiki-rest/data
+chmod 750 /var/lib/pukiwiki-rest/data
 ```
 
-Apache 側で `.htaccess` を有効にします:
+作成した場所を環境変数 `PKWK_REST_DATA` で API に知らせます。
+
+Apache（mod_php / CGI）の場合:
 
 ```apacheconf
 <Directory /var/www/pukiwiki>
     AllowOverride All
     Require all granted
+    SetEnv PKWK_REST_DATA /var/lib/pukiwiki-rest/data
 </Directory>
 ```
+
+PHP-FPM の場合はプール設定に `env[PKWK_REST_DATA] = /var/lib/pukiwiki-rest/data`、
+nginx の場合はあわせて `fastcgi_param PKWK_REST_DATA /var/lib/pukiwiki-rest/data;` を設定します。
+
+> **DocRoot 内デフォルト（`rest-api-v2/data`）のまま使う場合**
+> `data/` の防御は `.htaccess` 頼みになるため、nginx・`php -S`・`AllowOverride None` の
+> 環境では鍵や監査ログが Web に丸見えになります。このリスクを避けるため、
+> **データディレクトリが DocRoot 内にあると API は既定で 500（`insecure_data_dir`）を返して
+> 起動を拒否します**。下の (b) で 403 が返ることを確認した上で、環境変数
+> `PKWK_REST_ALLOW_DOCROOT_DATA=1`（Apache: `SetEnv`、FPM: `env[...]`）を設定した場合のみ
+> DocRoot 内で動作します。検証用途以外では DocRoot 外を推奨します。
+>
+> nginx で DocRoot 内に置く場合の deny 設定例:
+>
+> ```nginx
+> location ~ ^/rest-api-v2/data/ { deny all; }
+> ```
 
 **設置後に必ず確認する 2 点**:
 
@@ -67,8 +88,10 @@ Apache 側で `.htaccess` を有効にします:
 # (a) 認証が効いている（401 が返る）
 curl -i https://example.com/rest-api-v2/api/v1/pages/FrontPage
 # → HTTP/1.1 401 Unauthorized
+# → 500 で code=insecure_data_dir の場合は PKWK_REST_DATA が DocRoot 内（上記参照）
 
 # (b) data/（キー・監査ログ・スナップショット）が外部から見えない（403 が返る）
+#     ※ DocRoot 内デフォルトのまま使う場合の確認。DocRoot 外なら物理的に配信されない
 curl -i https://example.com/rest-api-v2/data/keys.php
 # → HTTP/1.1 403 Forbidden   ← 200 が返る場合は AllowOverride の設定を見直すこと
 ```
@@ -82,6 +105,9 @@ curl -i https://example.com/rest-api-v2/data/keys.php
 
 ```bash
 cd /var/www/pukiwiki
+
+# データディレクトリを DocRoot 外に置いた場合は、Web 側と同じ場所を指定する
+export PKWK_REST_DATA=/var/lib/pukiwiki-rest/data
 
 # 編集も可能なキー（自分のスクリプト・信頼するエージェント用）
 php rest-api-v2/bin/make-key.php --label my-editor --scope write
@@ -132,6 +158,11 @@ php rest-api-v2/bin/make-key.php --revoke my-editor   # 即時失効
 |---------|-----------|---------|
 | `read`  | ページ取得・一覧・検索・過去版閲覧 | AI ボット、検索、バックアップ |
 | `write` | read の全機能 ＋ ページ全文の作成・更新 | 自分のスクリプト、信頼する編集エージェント |
+
+`read` スコープにも PukiWiki 本体の閲覧制限がそのまま効きます:
+
+- `:config` など `:` 始まりのシステムページは取得・過去版とも 403（一覧・検索にも出ない）
+- `$read_auth` で閲覧制限したページは取得・過去版が 403 になり、検索結果からも除外される
 
 キーは必ず `Authorization: Bearer <キー>` ヘッダで送ります。
 **URL のクエリパラメータに載せてはいけません**（アクセスログ・履歴に残るため）。
@@ -293,17 +324,22 @@ write キー（および MCP）でも、以下は常に強制されます:
 4. **システムページ** — `:config` など `:` 始まりは 403
 5. **空本文の拒否** — 空の content は 400（PukiWiki は空本文をページ削除として扱うため）。
    **削除 API はありません**。削除・凍結・リネームは Web UI で行います
-6. **全版スナップショット** — 書き込み前後の版を `data/snapshots/` に保存（削除しない）
-7. **監査ログ** — 全書き込み・拒否を `data/audit/audit-YYYYMM.jsonl` に追記
-8. **#author 記録** — 保存ページの `#author` 行にキーの label / MCP actor が入る
+6. **本文サイズ上限** — 既定 1MB を超える content は 413
+   （環境変数 `PKWK_REST_MAX_BODY_BYTES` で変更可。REST・MCP 両方に効く）
+7. **全版スナップショット** — 書き込み前後の版を `data/snapshots/` に保存（削除しない）
+8. **監査ログ** — 全書き込み・拒否を `data/audit/audit-YYYYMM.jsonl` に追記
+9. **#author 記録** — 保存ページの `#author` 行にキーの label / MCP actor が入る
+
+読み取り側にも本体の閲覧認可が適用されます（`:` システムページの read 拒否、
+`$read_auth` ページの read/revisions 403 と検索除外。[3.3 節](#33-スコープの考え方)参照）。
 
 ## 7. テスト
 
 ```bash
-# ユニットテスト（PukiWiki 本体不要・58 件）
+# ユニットテスト（PukiWiki 本体不要・74 件）
 php rest-api-v2/test/unit_test.php
 
-# 統合テスト（実 PukiWiki の使い捨てコピーに対して・41 件）
+# 統合テスト（実 PukiWiki の使い捨てコピーに対して・47 件）
 cp -r /var/www/pukiwiki /tmp/pkwk-test
 PKWK_ROOT=/tmp/pkwk-test php rest-api-v2/test/integration_test.php
 ```
@@ -319,10 +355,14 @@ PKWK_ROOT=/tmp/pkwk-test php rest-api-v2/test/integration_test.php
 | `/pages/...` が 404 | `mod_rewrite` / `AllowOverride All`。または `.../api/v1/index.php/pages/...` の PATH_INFO 形式を試す |
 | 409 が続く | 書き込み前に GET し直し、返ってきた `sha1` / `new_sha1` を次の `base_sha1` に使う |
 | 保存内容が送信内容と違う | 正常動作（`#author` 行・見出しアンカーの付与）。`new_sha1` を信用する |
+| 500 `insecure_data_dir` | データディレクトリが DocRoot 内。`PKWK_REST_DATA` で外に移す（[2 節](#2-インストール)参照） |
+| 413 が返る | 本文が上限（既定 1MB）超。`PKWK_REST_MAX_BODY_BYTES` で調整 |
+| 403 `read_forbidden` | `$read_auth` の閲覧制限ページ。API キーでは閲覧制限を迂回できない（仕様） |
 | 500 エラー | PHP の error_log、`data/` の書き込み権限、`PKWK_ROOT` の指し先 |
 
 環境変数（`PKWK_ROOT` / `PKWK_REST_DATA` / `PKWK_API_KEYS` / `PKWK_PROTECTED_PAGES` /
-`PKWK_MCP_ACTOR`）の詳細は [rest-api-v2/docs/setup.md](rest-api-v2/docs/setup.md) を参照。
+`PKWK_MCP_ACTOR` / `PKWK_REST_ALLOW_DOCROOT_DATA` / `PKWK_REST_MAX_BODY_BYTES` /
+`PKWK_REST_MAX_JSON_BYTES`）の詳細は [rest-api-v2/docs/setup.md](rest-api-v2/docs/setup.md) を参照。
 
 ## 9. ディレクトリ構成
 

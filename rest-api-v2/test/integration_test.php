@@ -20,6 +20,7 @@
  *   9. スナップショットが書き込みごとに増える
  *  10. #author 行に API 操作者が記録される
  *  11. MCP ハンドラの write フローが実 PukiWiki で通る
+ *  12. 閲覧認可 — ':' ページの直接 read 拒否、$read_auth ページの read 403・検索除外
  * @version v2.0
  */
 declare(strict_types=1);
@@ -226,5 +227,38 @@ ok(str_contains($text, 'page_protected'), 'MCP でも保護ページは拒否');
 clearstatcache();
 $final = (string)file_get_contents($file);
 ok(str_contains($final, 'mcp-integration'), 'MCP 書き込みの #author に MCP actor が記録される');
+
+// =========================================================================
+section('12. 閲覧認可（read 側の制限）');
+// =========================================================================
+// ':' システムページは write と対称に直接 read も拒否
+expect_api_error(fn() => $REST_PAGES->read(':config'), 403, "':' システムページの直接 read は 403");
+
+// $read_auth の閲覧制限を API read にも適用（check_readable 連動）
+$secret = '統合テスト/閲覧制限ページ';
+$REST_PAGES->write($secret, "ここは閲覧制限の内容ベバシズマブ\n", $EMPTY, 'integration-key');
+
+$saved_read_auth  = $GLOBALS['read_auth'] ?? 0;
+$saved_read_pages = $GLOBALS['read_auth_pages'] ?? [];
+$GLOBALS['read_auth']       = 1;
+$GLOBALS['read_auth_pages'] = ['#^' . preg_quote($secret, '#') . '$#' => 'someuser'];
+
+expect_api_error(fn() => $REST_PAGES->read($secret), 403, 'read_auth 対象ページの read は 403');
+$hits = $REST_PAGES->search('ベバシズマブ', 10);
+ok(count($hits) === 0, 'read_auth 対象ページは検索結果から除外される（snippet 漏えい防止）');
+$hits = $REST_PAGES->search('深い階層', 10);
+ok(count($hits) >= 1, 'read_auth 非対象ページは引き続き検索できる');
+
+// MCP 経由の read も同じ制限を受ける（PageStore 内で認可するため）
+$resp = $mcp->handle(['jsonrpc' => '2.0', 'id' => 7, 'method' => 'tools/call',
+    'params' => ['name' => 'wiki_read_page', 'arguments' => ['page' => $secret]]]);
+$text = $resp['result']['content'][0]['text'] ?? '';
+ok(str_starts_with($text, 'Error:') && str_contains($text, 'not readable'),
+    'MCP の wiki_read_page も read_auth に従う');
+
+$GLOBALS['read_auth']       = $saved_read_auth;
+$GLOBALS['read_auth_pages'] = $saved_read_pages;
+$d = $REST_PAGES->read($secret);
+ok(str_contains($d['content'], 'ベバシズマブ'), 'read_auth を戻すと再び読める（回帰確認）');
 
 summary();
