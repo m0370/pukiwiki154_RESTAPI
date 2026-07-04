@@ -431,12 +431,12 @@ pukiwiki-mcp/            MCP stdio ブリッジ・方式 B（リモート・Node
 ├── server.mjs           エントリポイント（依存パッケージなし）
 ├── lib/                 rest-client / tools
 └── test/                モック REST サーバーに対する自動テスト
-
-rest-api/                v0.1（非推奨・参考実装。rest-api/DEPRECATED.md 参照）
 ```
 
-v0.1（SQLite 台帳＋下書き承認方式）は検証で PukiWiki 統合層に致命的な問題が
-複数見つかったため、ファイルのみ方式の v2 として再実装しました。
+旧 v0.1 実装（`rest-api/`・SQLite 台帳＋下書き承認方式）は、検証で PukiWiki 統合層に
+致命的な問題が複数見つかったため、ファイルのみ方式の v2 として再実装し、
+v0.3 でリポジトリから削除しました。v0.1 のコードと問題一覧（DEPRECATED.md）は
+[タグ v0.2 のツリー](https://github.com/m0370/pukiwiki154_RESTAPI/tree/v0.2/rest-api)で参照できます。
 
 ## 10. ライセンス
 
