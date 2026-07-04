@@ -143,6 +143,10 @@ write キーでも以下は常に強制されます:
 
 ## MCP サーバー（Claude Desktop / Claude Code）
 
+ここで説明するのは PukiWiki と**同一マシン**で動かす PHP 直結版（方式 A）です。
+リモートから REST API 経由で使う Node ブリッジ版（方式 B・API キー認証あり）は
+[pukiwiki-mcp/README.md](../../pukiwiki-mcp/README.md) を参照してください。
+
 `claude_desktop_config.json`（または `.mcp.json`）に追記:
 
 ```json

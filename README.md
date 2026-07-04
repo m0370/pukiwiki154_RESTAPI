@@ -282,7 +282,17 @@ curl -H "Authorization: Bearer $KEY" "$BASE/pages/メモ/今日/revisions/178294
 
 ## 5. MCP サーバー（Claude 連携）
 
-Claude Desktop / Claude Code から Wiki を直接読み書きできます。
+Claude Desktop / Claude Code から Wiki を直接読み書きできます。2 つの方式があります。
+
+| | 方式 A: PHP 直結 | 方式 B: Node ブリッジ |
+|---|---|---|
+| 実体 | `rest-api-v2/mcp/server.php` | `pukiwiki-mcp/server.mjs` |
+| 動作場所 | **PukiWiki と同じマシン**のみ | どこでも（リモート可） |
+| 経路 | ファイル直接アクセス | REST API（HTTPS） |
+| 認証 | なし（起動できる人＝編集できる人） | **API キー必須**（read / write スコープ） |
+| 向いている人 | サーバー管理者本人 | 一般利用者・チーム配布 |
+
+### 5.1 方式 A: PHP 直結（同一マシン）
 
 `claude_desktop_config.json`（Claude Code の場合はプロジェクトの `.mcp.json`）に追記:
 
@@ -301,16 +311,53 @@ Claude Desktop / Claude Code から Wiki を直接読み書きできます。
 }
 ```
 
-| ツール | 機能 |
-|--------|------|
-| `wiki_read_page`  | ページ取得（sha1・凍結状態付き） |
-| `wiki_list_pages` | ページ一覧 |
-| `wiki_search`     | 全文検索 |
-| `wiki_write_page` | 全文書き込み（base_sha1 必須・凍結/保護ページ拒否） |
-
-> **注意**: MCP はローカルプロセスとして動くため API キー認証はありません
+> **注意**: 方式 A はローカルプロセスとして動くため API キー認証はありません
 > （サーバーを起動できる人＝編集できる人）。`PKWK_MCP_ACTOR` が監査ログと
 > `#author` 行に記録されます。AI に触らせたくないページは**凍結**してください。
+
+### 5.2 方式 B: Node ブリッジ（リモート・API キー認証）
+
+Node.js 18 以上が必要です（依存パッケージなし・`npm install` 不要）。
+[3 節](#3-api-キーの発行と管理)で発行した API キーを使います。
+
+```json
+{
+  "mcpServers": {
+    "pukiwiki": {
+      "command": "node",
+      "args": ["/path/to/pukiwiki-mcp/server.mjs"],
+      "env": {
+        "PUKIWIKI_API_URL": "https://example.com/rest-api-v2/api/v1",
+        "PUKIWIKI_API_KEY": "pkw2_..."
+      }
+    }
+  }
+}
+```
+
+Claude Code ならコマンド一発でも登録できます:
+
+```bash
+claude mcp add pukiwiki \
+  --env PUKIWIKI_API_URL=https://example.com/rest-api-v2/api/v1 \
+  --env PUKIWIKI_API_KEY=pkw2_... \
+  -- node /path/to/pukiwiki-mcp/server.mjs
+```
+
+read スコープのキーなら閲覧・検索のみ、write スコープなら編集も可能です。
+書き込みはキーの label が監査ログと `#author` 行に記録されます。
+詳細は [pukiwiki-mcp/README.md](pukiwiki-mcp/README.md) を参照してください。
+
+### 5.3 ツール一覧
+
+| ツール | 機能 | A | B |
+|--------|------|---|---|
+| `wiki_read_page`  | ページ取得（sha1・凍結状態付き） | ✓ | ✓ |
+| `wiki_list_pages` | ページ一覧 | ✓ | ✓ |
+| `wiki_search`     | 全文検索 | ✓ | ✓ |
+| `wiki_write_page` | 全文書き込み（base_sha1 必須・凍結/保護ページ拒否） | ✓ | ✓ |
+| `wiki_page_revisions` | API 書き込みスナップショットの一覧 | — | ✓ |
+| `wiki_read_revision`  | 過去スナップショットの本文取得 | — | ✓ |
 
 ## 6. 書き込みの安全装置
 
@@ -342,6 +389,9 @@ php rest-api-v2/test/unit_test.php
 # 統合テスト（実 PukiWiki の使い捨てコピーに対して・47 件）
 cp -r /var/www/pukiwiki /tmp/pkwk-test
 PKWK_ROOT=/tmp/pkwk-test php rest-api-v2/test/integration_test.php
+
+# Node ブリッジのテスト（モック REST サーバーに対して・25 件）
+cd pukiwiki-mcp && node --test
 ```
 
 統合テストは本物の `page_write()` を通し、v0.1 で発見された問題
@@ -371,11 +421,16 @@ rest-api-v2/
 ├── bootstrap.php        PukiWiki 本体の正規初期化を再現してロード
 ├── api/v1/index.php     REST フロントコントローラ
 ├── lib/                 Auth / PageStore / SnapshotStore / Audit / Router / Response
-├── mcp/server.php       MCP stdio サーバー（Claude Desktop / Claude Code 用）
+├── mcp/server.php       MCP stdio サーバー・方式 A（同一マシン・PHP 直結）
 ├── bin/make-key.php     API キー管理 CLI
 ├── data/                キー・スナップショット・監査ログ（Web 非公開）
 ├── docs/                setup.md / api-reference.md
 └── test/                ユニット＋統合テスト
+
+pukiwiki-mcp/            MCP stdio ブリッジ・方式 B（リモート・Node.js・REST API 経由）
+├── server.mjs           エントリポイント（依存パッケージなし）
+├── lib/                 rest-client / tools
+└── test/                モック REST サーバーに対する自動テスト
 
 rest-api/                v0.1（非推奨・参考実装。rest-api/DEPRECATED.md 参照）
 ```

@@ -15,6 +15,11 @@ rest-api-v2/data/*
 # PHP キャッシュ
 *.cache
 
+# Node.js（pukiwiki-mcp は依存ゼロだが、将来の開発用に除外）
+node_modules/
+npm-debug.log*
+package-lock.json
+
 # エディタ
 .vscode/
 .idea/
