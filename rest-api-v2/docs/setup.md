@@ -134,12 +134,14 @@ write キーでも以下は常に強制されます:
    **凍結＝「API 編集不可マーカー」**として使える（重要ページは凍結しておく）
 3. **保護ページ**: `FrontPage`・`MenuBar` は 403（環境変数 `PKWK_PROTECTED_PAGES` で変更可）
 4. **システムページ**: `:config` など `:` 始まりは 403
-5. **空本文拒否**: 空の content は 400（PukiWiki は空本文をページ削除として扱うため）
-6. **本文サイズ上限**: 既定 1MB 超は 413（`PKWK_REST_MAX_BODY_BYTES` で変更可）
-7. **全版スナップショット**: 書き込み前後の版を `data/snapshots/` に gzip 保存（削除しない）
-8. **監査ログ**: 全書き込み・拒否を `data/audit/audit-YYYYMM.jsonl` に追記
-9. **#author 記録**: 保存されたページの `#author` 行にキーの label が入る
-   （PukiWiki の差分画面だけで「誰が API で書いたか」を追跡できる）
+5. **編集認可（`$edit_auth`）**: `$edit_auth_pages` に該当するページへの書き込みは 403。
+   API にはログインユーザーの概念がないため一律拒否（fail-closed）
+6. **空本文拒否**: 空の content は 400（PukiWiki は空本文をページ削除として扱うため）
+7. **本文サイズ上限**: 既定 1MB 超は 413（`PKWK_REST_MAX_BODY_BYTES` で変更可）
+8. **全版スナップショット**: 書き込み前後の版を `data/snapshots/` に gzip 保存（削除しない）
+9. **監査ログ**: 全書き込み・拒否を `data/audit/audit-YYYYMM.jsonl` に追記
+10. **#author 記録**: 保存されたページの `#author` 行にキーの label が入る
+    （PukiWiki の差分画面だけで「誰が API で書いたか」を追跡できる）
 
 ## MCP サーバー（Claude Desktop / Claude Code）
 

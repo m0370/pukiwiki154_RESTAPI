@@ -261,4 +261,43 @@ $GLOBALS['read_auth_pages'] = $saved_read_pages;
 $d = $REST_PAGES->read($secret);
 ok(str_contains($d['content'], 'ベバシズマブ'), 'read_auth を戻すと再び読める（回帰確認）');
 
+// =========================================================================
+section('13. 編集認可（$edit_auth の write 側制限）');
+// =========================================================================
+// Web UI では edit プラグインが is_page_writable() で強制する編集認可を
+// API write にも適用する（API にはログインユーザーがいないため一律拒否 = fail-closed）
+$guarded = '統合テスト/編集制限ページ';
+$w = $REST_PAGES->write($guarded, "編集制限テストの初期内容\n", $EMPTY, 'integration-key');
+$guarded_sha1 = $w['new_sha1'];
+
+$saved_edit_auth  = $GLOBALS['edit_auth'] ?? 0;
+$saved_edit_pages = $GLOBALS['edit_auth_pages'] ?? [];
+$GLOBALS['edit_auth']       = 1;
+$GLOBALS['edit_auth_pages'] = ['#^' . preg_quote($guarded, '#') . '$#' => 'someuser'];
+
+expect_api_error(
+    fn() => $REST_PAGES->write($guarded, "上書き試行\n", $guarded_sha1, 'integration-key'),
+    403,
+    'edit_auth 対象ページへの write は 403（edit_forbidden）'
+);
+$d = $REST_PAGES->read($guarded);
+ok(str_contains($d['content'], '編集制限テストの初期内容'), 'edit_auth 拒否後も内容は無傷');
+
+// edit_auth 非対象ページは引き続き書ける
+$other = '統合テスト/編集制限外ページ';
+$w2 = $REST_PAGES->write($other, "こちらは制限外\n", $EMPTY, 'integration-key');
+ok($w2['is_new'] === true, 'edit_auth 非対象ページは引き続き書き込める');
+
+// MCP 経由の write も同じ制限を受ける（PageStore 内で認可するため）
+$resp = $mcp->handle(['jsonrpc' => '2.0', 'id' => 8, 'method' => 'tools/call',
+    'params' => ['name' => 'wiki_write_page', 'arguments' => [
+        'page' => $guarded, 'base_sha1' => $guarded_sha1, 'content' => 'MCP からの上書き試行']]]);
+$text = $resp['result']['content'][0]['text'] ?? '';
+ok(str_contains($text, 'edit_forbidden'), 'MCP の wiki_write_page も edit_auth に従う');
+
+$GLOBALS['edit_auth']       = $saved_edit_auth;
+$GLOBALS['edit_auth_pages'] = $saved_edit_pages;
+$w3 = $REST_PAGES->write($guarded, "制限解除後の上書き\n", $guarded_sha1, 'integration-key');
+ok($w3['changed'] === true, 'edit_auth を戻すと再び書ける（回帰確認）');
+
 summary();

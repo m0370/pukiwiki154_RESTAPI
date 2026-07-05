@@ -369,13 +369,15 @@ write キー（および MCP）でも、以下は常に強制されます:
    凍結が「API 編集不可マーカー」として機能する
 3. **保護ページ** — `FrontPage`・`MenuBar` は 403（環境変数 `PKWK_PROTECTED_PAGES` で変更可）
 4. **システムページ** — `:config` など `:` 始まりは 403
-5. **空本文の拒否** — 空の content は 400（PukiWiki は空本文をページ削除として扱うため）。
+5. **編集認可（`$edit_auth`）** — `$edit_auth_pages` に該当するページへの書き込みは 403。
+   API にはログインユーザーの概念がないため一律拒否（fail-closed）
+6. **空本文の拒否** — 空の content は 400（PukiWiki は空本文をページ削除として扱うため）。
    **削除 API はありません**。削除・凍結・リネームは Web UI で行います
-6. **本文サイズ上限** — 既定 1MB を超える content は 413
+7. **本文サイズ上限** — 既定 1MB を超える content は 413
    （環境変数 `PKWK_REST_MAX_BODY_BYTES` で変更可。REST・MCP 両方に効く）
-7. **全版スナップショット** — 書き込み前後の版を `data/snapshots/` に保存（削除しない）
-8. **監査ログ** — 全書き込み・拒否を `data/audit/audit-YYYYMM.jsonl` に追記
-9. **#author 記録** — 保存ページの `#author` 行にキーの label / MCP actor が入る
+8. **全版スナップショット** — 書き込み前後の版を `data/snapshots/` に保存（削除しない）
+9. **監査ログ** — 全書き込み・拒否を `data/audit/audit-YYYYMM.jsonl` に追記
+10. **#author 記録** — 保存ページの `#author` 行にキーの label / MCP actor が入る
 
 読み取り側にも本体の閲覧認可が適用されます（`:` システムページの read 拒否、
 `$read_auth` ページの read/revisions 403 と検索除外。[3.3 節](#33-スコープの考え方)参照）。
@@ -386,7 +388,7 @@ write キー（および MCP）でも、以下は常に強制されます:
 # ユニットテスト（PukiWiki 本体不要・74 件）
 php rest-api-v2/test/unit_test.php
 
-# 統合テスト（実 PukiWiki の使い捨てコピーに対して・47 件）
+# 統合テスト（実 PukiWiki の使い捨てコピーに対して・52 件）
 cp -r /var/www/pukiwiki /tmp/pkwk-test
 PKWK_ROOT=/tmp/pkwk-test php rest-api-v2/test/integration_test.php
 

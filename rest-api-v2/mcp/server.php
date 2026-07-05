@@ -30,6 +30,10 @@ if (php_sapi_name() !== 'cli') {
     exit(1);
 }
 
+// PHP の警告が stdout（JSON-RPC ストリーム）に混ざるとクライアント側で
+// パースエラーになるため、CLI の display_errors は stderr へ向ける
+ini_set('display_errors', 'stderr');
+
 require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/McpHandler.php';
 

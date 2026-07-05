@@ -12,7 +12,7 @@ require_once __DIR__ . '/Audit.php';
  *   1. 入力検証（ページ名・空本文・サイズ上限・保護ページ・READONLY）
  *   2. flock によるロック取得（data/locks/、リトライ付き）
  *   3. CAS: 現在ファイルの sha1 == base_sha1 でなければ 409
- *   4. is_freeze() / is_editable() チェック（PukiWiki ロード時）
+ *   4. is_freeze() / is_editable() / is_page_writable() チェック（PukiWiki ロード時）
  *   5. 書き込み前スナップショット（既存内容の退避）
  *   6. page_write()（PukiWiki ロード時）/ 原子的書き込み（スタンドアロン時）
  *   7. ファイル再読込 → new_sha1 を実内容から計算
@@ -309,6 +309,17 @@ final class PageStore
             if (function_exists('is_editable') && !is_editable($page)) {
                 $this->denied($page, $actor, $ip, 'page_not_editable');
                 throw new ApiException(403, "Page '{$page}' is not editable.", 'page_not_editable');
+            }
+            // $edit_auth による編集認可（Web UI では edit プラグインが is_page_writable() で
+            // 強制する。API にはログインユーザーがいないため、$edit_auth_pages に該当する
+            // ページは一律拒否 = fail-closed。$read_auth の read 側拒否と対称）
+            if (function_exists('is_page_writable') && !is_page_writable($page)) {
+                $this->denied($page, $actor, $ip, 'edit_forbidden');
+                throw new ApiException(
+                    403,
+                    "Page '{$page}' is protected by edit authentication (\$edit_auth).",
+                    'edit_forbidden'
+                );
             }
 
             // 書き込み前スナップショット（既存内容の退避。同一 sha1 は自動スキップ）

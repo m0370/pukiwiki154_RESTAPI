@@ -90,6 +90,7 @@ Content-Type: application/json
 | 403 | `insufficient_scope` | read キーで書き込もうとした |
 | 403 | `page_protected` / `system_page` | FrontPage・MenuBar・`:` ページ |
 | 403 | `page_frozen` / `page_not_editable` | 凍結・編集不可ページ |
+| 403 | `edit_forbidden` | `$edit_auth` の編集認可ページ（API からは一律拒否） |
 | 409 | `sha1_conflict` | 読んだ後に誰かが更新した → 再取得してやり直す |
 | 409 | `page_not_found_as_conflict` | 存在しないページに非 EMPTY の base を指定 |
 | 423 | `page_locked` | 別の書き込みが進行中 → リトライ |
