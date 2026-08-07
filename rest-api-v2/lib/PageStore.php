@@ -369,6 +369,14 @@ final class PageStore
             }
 
             try {
+                // 閲覧できないページは書き込めない（Web UI の edit と同じ前提）。
+                // $read_auth と $edit_auth は同じ _is_page_accessible() を使うため、
+                // identity を設定した「後」に判定して wiki_user の閲覧権限を正しく
+                // 反映させる。ここを飛ばすと、write スコープのキーが「読めないページ」
+                // を作成・上書きでき、さらに書き込み前スナップショットとして旧内容が
+                // data/snapshots/ に退避されてしまう（閲覧制限の迂回）。
+                $this->assertReadable($page);
+
                 // PukiWiki の凍結・編集可否チェック
                 // （page_write() 自身は PKWK_READONLY しか見ないため、ここで明示的に行う）
                 if (function_exists('is_freeze') && is_freeze($page)) {

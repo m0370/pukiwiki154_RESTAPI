@@ -37,6 +37,24 @@ require_once __DIR__ . '/../mcp/McpHandler.php';
 
 $EMPTY = PageStore::EMPTY_SHA1;
 
+// このテストが作るページ。同じコピーに対して繰り返し実行できるよう、開始時に消す。
+// （API に削除機能は無いので、テストの後始末はファイルを直接消す）
+$TEST_PAGES = [
+    'サイト統合テスト/認可',
+    'サイト統合テスト/拒否',
+    'サイト統合テスト/マークダウン',
+    'サイト統合テスト/プキウィキ記法',
+    'サイト統合テスト/凍結',
+    'サイト統合テスト/閲覧制限',
+];
+foreach ($TEST_PAGES as $p) {
+    @unlink($REST_PAGES->filePath($p));
+}
+if (function_exists('is_freeze')) {
+    is_freeze('', true); // static キャッシュを捨てる
+}
+clearstatcache();
+
 /** このサイトで $edit_auth が全ページに掛かっているか */
 $edit_auth_on = !empty($GLOBALS['edit_auth']) && function_exists('is_page_writable');
 /** $auth_users の先頭ユーザー（wiki_user として使う） */
@@ -194,7 +212,60 @@ if ($edit_auth_on && $wiki_user === '') {
 }
 
 // =========================================================================
-section('7. 読み取りはサイト設定でも通る');
+section('7. $read_auth: 読めないページは書けない');
+
+// $read_auth と $edit_auth は同じ _is_page_accessible() を使う。wiki_user 付きキーが
+// $edit_auth を通せるようになった以上、「読めないページに書ける」穴が開いていないか
+// を明示的に確認する（開いていると旧内容がスナップショットに退避され漏えいする）。
+$saved_read_auth       = $GLOBALS['read_auth'] ?? 0;
+$saved_read_auth_pages = $GLOBALS['read_auth_pages'] ?? [];
+$secret = 'サイト統合テスト/閲覧制限';
+
+try {
+    // まず通常状態で作成しておく
+    if (!$edit_auth_on || $wiki_user !== '') {
+        $REST_PAGES->write($secret, "*秘密\n元の内容\n", $EMPTY, 'editor-key', '', $wiki_user);
+    }
+    $secret_file = $REST_PAGES->filePath($secret);
+    $before_body = is_file($secret_file) ? (string)file_get_contents($secret_file) : '';
+
+    // このページだけ、誰も閲覧できないグループに制限する
+    $GLOBALS['read_auth']       = 1;
+    $GLOBALS['read_auth_pages'] = ['#サイト統合テスト/閲覧制限#' => 'nobody-group'];
+
+    expect_api_error(
+        fn() => $REST_PAGES->write(
+            $secret,
+            "*秘密\n上書きされた\n",
+            sha1($before_body),
+            'editor-key',
+            '',
+            $wiki_user
+        ),
+        403,
+        '閲覧できないページへの書き込みは 403（read_forbidden）'
+    );
+
+    clearstatcache(true, $secret_file);
+    ok(
+        is_file($secret_file) && (string)file_get_contents($secret_file) === $before_body,
+        '拒否されたページの内容は無傷'
+    );
+
+    // 読める状態に戻せば書ける（回帰確認）
+    $GLOBALS['read_auth']       = $saved_read_auth;
+    $GLOBALS['read_auth_pages'] = $saved_read_auth_pages;
+    if (!$edit_auth_on || $wiki_user !== '') {
+        $r = $REST_PAGES->write($secret, "*秘密\n再開\n", sha1($before_body), 'editor-key', '', $wiki_user);
+        ok($r['changed'] === true, 'read_auth を戻すと再び書ける（回帰確認）');
+    }
+} finally {
+    $GLOBALS['read_auth']       = $saved_read_auth;
+    $GLOBALS['read_auth_pages'] = $saved_read_auth_pages;
+}
+
+// =========================================================================
+section('8. 読み取りはサイト設定でも通る');
 
 $listed = $REST_PAGES->listPages(5, 0);
 ok(!empty($listed['pages']), 'ページ一覧を取得できる');
