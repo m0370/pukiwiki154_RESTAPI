@@ -247,92 +247,6 @@ async function toolReadRevision(client, args) {
 
 // ---------------------------------------------------------------------------
 // ディスパッチとツール定義
-// --- 下書き -----------------------------------------------------------------
-//
-// 下書きは本ページとは別のファイルに保存され、page_write() を通らない。
-// そのため本文は一切加工されない（&now; 等のマクロも展開されない）。
-// 公開（下書きを本ページへ反映する操作）は API に無い。Web UI の役目。
-
-async function toolReadDraft(client, args) {
-  const page = strArg(args, 'page', true);
-
-  let r;
-  try {
-    r = await client.readDraft(page);
-  } catch (e) {
-    return { text: errorText('Draft read failed', e), isError: true };
-  }
-
-  return {
-    text: [
-      `# Draft for: ${r.page}`,
-      `Last saved: ${r.updated_at ?? 'unknown'}`,
-      '',
-      'This is a DRAFT. The live page is unchanged until it is published from the web UI.',
-      '--- content ---',
-      r.content,
-    ].join('\n'),
-  };
-}
-
-async function toolWriteDraft(client, args) {
-  const page = strArg(args, 'page', true);
-  const content = strArg(args, 'content', true);
-
-  let r;
-  try {
-    r = await client.writeDraft(page, content);
-  } catch (e) {
-    return { text: errorText('Draft write failed', e), isError: true };
-  }
-
-  return {
-    text: [
-      'Draft saved. The live page is UNCHANGED.',
-      `Page  : ${r.page}`,
-      `Saved : ${r.updated_at ?? 'unknown'}`,
-      `Size  : ${r.size} bytes`,
-      '',
-      'Content is stored verbatim (no #author line, no heading anchors, macros not expanded).',
-      'To publish it, open the page in the PukiWiki web UI and use the draft notice.',
-    ].join('\n'),
-  };
-}
-
-async function toolListDrafts(client, args) {
-  const limit = clamp(intArg(args, 'limit', 100), 1, 1000);
-  const offset = Math.max(0, intArg(args, 'offset', 0));
-
-  let r;
-  try {
-    r = await client.listDrafts(limit, offset);
-  } catch (e) {
-    return { text: errorText('Draft list failed', e), isError: true };
-  }
-
-  const drafts = r.drafts ?? [];
-  if (drafts.length === 0) {
-    return { text: 'No drafts.' };
-  }
-  const lines = [`Drafts (${r.total} total, newest first):`, ''];
-  for (const d of drafts) {
-    lines.push(`- ${d.page}  (${d.updated_at ?? 'unknown'})`);
-  }
-  return { text: lines.join('\n') };
-}
-
-async function toolDeleteDraft(client, args) {
-  const page = strArg(args, 'page', true);
-
-  try {
-    await client.deleteDraft(page);
-  } catch (e) {
-    return { text: errorText('Draft delete failed', e), isError: true };
-  }
-
-  return { text: `Draft for '${page}' discarded. The live page is unchanged.` };
-}
-
 // ---------------------------------------------------------------------------
 
 const HANDLERS = {
@@ -342,10 +256,6 @@ const HANDLERS = {
   wiki_write_page: toolWritePage,
   wiki_page_revisions: toolPageRevisions,
   wiki_read_revision: toolReadRevision,
-  wiki_read_draft: toolReadDraft,
-  wiki_write_draft: toolWriteDraft,
-  wiki_list_drafts: toolListDrafts,
-  wiki_delete_draft: toolDeleteDraft,
 };
 
 export async function callTool(client, name, args) {
@@ -451,58 +361,6 @@ export function toolDefinitions() {
           revision: { type: 'string', description: 'Revision id, e.g. "1782946039.123456_<sha1>"' },
         },
         required: ['page', 'revision'],
-      },
-    },
-    {
-      name: 'wiki_read_draft',
-      description: 'Read the draft for a page. A draft is unpublished work-in-progress stored '
-        + 'separately from the live page. Use this to pick up something the author left in '
-        + 'progress, or to review your own draft before asking them to publish it.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          page: { type: 'string', description: 'Page name' },
-        },
-        required: ['page'],
-      },
-    },
-    {
-      name: 'wiki_write_draft',
-      description: 'Save a draft for a page (full replacement). The live page is NOT modified. '
-        + 'Prefer this over wiki_write_page when the author should review the text before it '
-        + 'goes live. Content is stored verbatim — no #author line, no heading anchors, and '
-        + 'macros such as &now; are left intact. Publishing is done by a human in the web UI; '
-        + 'there is deliberately no publish tool.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          page: { type: 'string', description: 'Page name' },
-          content: { type: 'string', description: 'Full draft text (must not be empty)' },
-        },
-        required: ['page', 'content'],
-      },
-    },
-    {
-      name: 'wiki_list_drafts',
-      description: 'List pages that have an unpublished draft, newest first.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          limit: { type: 'integer', description: 'Max drafts to return (default 100)' },
-          offset: { type: 'integer', description: 'Offset for paging (default 0)' },
-        },
-      },
-    },
-    {
-      name: 'wiki_delete_draft',
-      description: 'Discard the draft for a page. The live page is unchanged. '
-        + 'Use this only when the draft is genuinely no longer wanted.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          page: { type: 'string', description: 'Page name' },
-        },
-        required: ['page'],
       },
     },
   ];

@@ -53,16 +53,9 @@ $TEST_PAGES = [
     'サイト統合テスト/プキウィキ記法',
     'サイト統合テスト/凍結',
     'サイト統合テスト/閲覧制限',
-    'サイト統合テスト/下書き',
 ];
 foreach ($TEST_PAGES as $p) {
     @unlink($REST_PAGES->filePath($p));
-    // 下書きも消す。⚠ ここで消すのは上の $TEST_PAGES だけ。
-    // 実運用サイトのコピーには本物の下書きが入っているため、
-    // テスト用のページ名が既存の下書きと衝突しないことが前提。
-    if (defined('DRAFT_DIR') && function_exists('encode')) {
-        @unlink(DRAFT_DIR . encode($p) . '.txt');
-    }
 }
 if (function_exists('is_freeze')) {
     is_freeze('', true); // static キャッシュを捨てる
@@ -283,91 +276,5 @@ section('8. 読み取りはサイト設定でも通る');
 
 $listed = $REST_PAGES->listPages(5, 0);
 ok(!empty($listed['pages']), 'ページ一覧を取得できる');
-
-// =========================================================================
-section('9. 下書き（draft）');
-
-if (!PageStore::draftAvailable()) {
-    echo "  - スキップ（このサイトに lib/draft.php が無い）\n";
-} elseif ($edit_auth_on && $wiki_user === '') {
-    echo "  - スキップ（書き込みできる wiki_user が無い）\n";
-} else {
-    $dp = 'サイト統合テスト/下書き';
-
-    // 本ページを先に作る（下書きが本ページに影響しないことを確かめるため）
-    $REST_PAGES->write($dp, "*本ページ\n公開済みの内容\n", $EMPTY, 'editor-key', '', $wiki_user);
-    $page_sha1_before = $REST_PAGES->read($dp)['sha1'];
-
-    // --- 未作成なら 404 ---
-    expect_api_error(fn() => $REST_PAGES->readDraft($dp), 404, '下書きが無ければ 404');
-
-    // --- 空の下書きは拒否（公開するとページ削除になるため） ---
-    expect_api_error(
-        fn() => $REST_PAGES->writeDraft($dp, "  \n", 'editor-key', '', $wiki_user),
-        400,
-        '空の下書きは 400（Web UI で公開するとページ削除になるのを防ぐ）'
-    );
-
-    // --- 保存 ---
-    // $str_rules マクロと Markdown の箇条書きを含む本文で、無加工保存を確かめる
-    $draft_body = "#md\n# 推敲中\n* 項目1\n\n現在時刻: &now;\n日付: &date;\n";
-    $w = $REST_PAGES->writeDraft($dp, $draft_body, 'editor-key', '', $wiki_user);
-    ok($w['size'] === strlen($draft_body), '下書きを保存できる');
-
-    // --- 取得 ---
-    $r = $REST_PAGES->readDraft($dp);
-    ok($r['content'] === $draft_body, '保存した本文がそのまま返る（1バイトも加工されない）');
-    ok(str_contains($r['content'], '&now;'), '&now; が実値に置換されない');
-    ok(!preg_match('/\[#[0-9a-z]{8}\]/', $r['content']), '見出しアンカーが混入しない');
-    ok(!empty($r['saved']), 'saved（保存時刻）が返る');
-    ok(!empty($r['digest']), 'digest（保存時点の本ページの md5）が返る');
-
-    // --- 本ページが変化していないこと（これが下書きの肝） ---
-    ok($REST_PAGES->read($dp)['sha1'] === $page_sha1_before,
-        '下書きを書いても本ページは 1 バイトも変わらない');
-
-    // --- 一覧に出る ---
-    $dl = $REST_PAGES->listDrafts(1000, 0);
-    $names = array_column($dl['drafts'], 'page');
-    ok(in_array($dp, $names, true), '下書き一覧に出る');
-
-    // --- 上書き ---
-    $REST_PAGES->writeDraft($dp, "#md\n# 推敲後\n", 'editor-key', '', $wiki_user);
-    ok($REST_PAGES->readDraft($dp)['content'] === "#md\n# 推敲後\n", '上書きできる');
-
-    // --- 削除 ---
-    $REST_PAGES->deleteDraft($dp, 'editor-key', '', $wiki_user);
-    expect_api_error(fn() => $REST_PAGES->readDraft($dp), 404, '削除すると 404');
-    expect_api_error(
-        fn() => $REST_PAGES->deleteDraft($dp, 'editor-key', '', $wiki_user),
-        404,
-        '無い下書きの削除は 404'
-    );
-    ok($REST_PAGES->read($dp)['sha1'] === $page_sha1_before,
-        '下書きを消しても本ページは無傷');
-
-    // --- 認可: wiki_user 無しは fail-closed ---
-    if ($edit_auth_on) {
-        expect_api_error(
-            fn() => $REST_PAGES->writeDraft($dp, "x\n", 'nouser-key'),
-            403,
-            'wiki_user 無しキーの下書き書き込みは 403'
-        );
-    }
-
-    // --- 認可: 凍結ページには下書きを書けない ---
-    $fz = 'サイト統合テスト/凍結';
-    if (is_file($REST_PAGES->filePath($fz))) {
-        is_freeze($fz, true);
-        expect_api_error(
-            fn() => $REST_PAGES->writeDraft($fz, "x\n", 'editor-key', '', $wiki_user),
-            403,
-            '凍結ページへの下書き書き込みは 403'
-        );
-    }
-
-    // 後始末
-    @unlink(DRAFT_DIR . encode($dp) . '.txt');
-}
 
 summary();
