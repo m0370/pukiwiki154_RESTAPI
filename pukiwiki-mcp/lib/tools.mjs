@@ -266,7 +266,7 @@ async function toolReadDraft(client, args) {
   return {
     text: [
       `# Draft for: ${r.page}`,
-      `Saved: ${r.saved ?? 'unknown'}`,
+      `Last saved: ${r.updated_at ?? 'unknown'}`,
       '',
       'This is a DRAFT. The live page is unchanged until it is published from the web UI.',
       '--- content ---',
@@ -290,7 +290,7 @@ async function toolWriteDraft(client, args) {
     text: [
       'Draft saved. The live page is UNCHANGED.',
       `Page  : ${r.page}`,
-      `Saved : ${r.saved ?? 'unknown'}`,
+      `Saved : ${r.updated_at ?? 'unknown'}`,
       `Size  : ${r.size} bytes`,
       '',
       'Content is stored verbatim (no #author line, no heading anchors, macros not expanded).',
