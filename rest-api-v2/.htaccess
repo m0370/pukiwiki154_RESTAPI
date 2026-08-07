@@ -1,20 +1,43 @@
 # PukiWiki REST API v2 — トップレベル保護ルール
 #
-# data/ 以下（APIキー・スナップショット・監査ログ）は絶対に配信しない。
-# （data/.htaccess にも deny があり二重防御。bootstrap が自動生成する）
+# 方針: Web から直接叩いてよいのは api/ 以下だけ。それ以外は全て 403 にする。
+#
+#   api/    REST エントリポイント（唯一の公開面）
+#   lib/    require される実装。HTTP から触る必要はない
+#   mcp/    MCP stdio サーバー（CLI 専用）
+#   bin/    キー管理 CLI（自前の CLI ガードもあるが二重に塞ぐ）
+#   test/   テスト（自前の CLI ガードもあるが二重に塞ぐ。本番へは配置しないこと）
+#   data/   APIキー・スナップショット・監査ログ（最重要機密）
+#   docs/   ドキュメント。配信する必要がない
+#   *.php   bootstrap.php / config.local.php など。require 専用
+#
+# PHP ファイルは通常 PHP に実行されて空を返すだけだが、PHP ハンドラが外れた
+# 状態（設定ミス・.htaccess の欠落）ではソースが平文で配信される。とくに
+# config.local.php はデータディレクトリの絶対パスを含むため、拒否しておく。
 
 Options -Indexes
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    # data/ 以下への直接アクセスを 403 で拒否
-    RewriteRule ^data(/|$) - [F,L]
+
+    # ディレクトリ単位の拒否（api/ 以外すべて）
+    RewriteRule ^(data|test|bin|lib|mcp|docs)(/|$) - [F,L]
+
+    # 直下のファイル（bootstrap.php, config.local.php, *.example 等）を拒否
+    RewriteRule ^[^/]+\.(php|example|md|dist)$ - [F,L]
 </IfModule>
 
 # mod_rewrite が無い環境向けのフォールバック:
 # 機密拡張子はどこにあっても配信しない
 <IfModule mod_authz_core.c>
-    <FilesMatch "\.(jsonl|gz|lock)$">
+    <FilesMatch "\.(jsonl|gz|lock|example|dist)$">
         Require all denied
     </FilesMatch>
+    # トップレベルの PHP は require 専用（api/v1/index.php はこの階層に無い）
+    <Files "bootstrap.php">
+        Require all denied
+    </Files>
+    <Files "config.local.php">
+        Require all denied
+    </Files>
 </IfModule>

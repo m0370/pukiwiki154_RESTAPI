@@ -9,6 +9,13 @@
  */
 declare(strict_types=1);
 
+// CLI 専用。Web から到達できる場所に置かれても実行させない
+// （integration 系は実 wiki に書き込むため、公開ディレクトリでの誤実行は破壊的）。
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit('CLI only');
+}
+
 require_once __DIR__ . '/testlib.php';
 
 // ---- テスト用データディレクトリ（毎回まっさら）------------------------------
