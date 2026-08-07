@@ -3,7 +3,7 @@
  * API キー設定の例。
  *
  * 実際のキーは bin/make-key.php で生成すること:
- *   php rest-api-v2/bin/make-key.php --label my-editor --scope write
+ *   php rest-api-v2/bin/make-key.php --label my-editor --scope write --wiki-user tgoto
  *
  * このファイルを keys.php にコピーして使う場合も、key_sha256 には
  * 「生キーの SHA-256 ハッシュ」を入れる（生キーそのものは保存しない）。
@@ -15,5 +15,8 @@ return [
     //     'scope'      => 'write',            // 'read'（閲覧・検索のみ） | 'write'（編集も可）
     //     'expires_at' => null,               // 失効 UNIX time。null = 無期限
     //     'ip_allow'   => null,               // '203.0.113.5' や '198.51.100.0/24'（カンマ区切り可）
+    //     'wiki_user'  => null,               // 名乗る PukiWiki ユーザー名（$auth_users のキー）。
+    //                                         // $edit_auth 有効サイトでは指定しないと書き込みが全て
+    //                                         // 403 edit_forbidden になる。read キーには不要
     // ],
 ];

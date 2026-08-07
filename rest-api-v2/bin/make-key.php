@@ -7,7 +7,7 @@
  * キーの生値は生成時に一度だけ表示し、keys.php には SHA-256 ハッシュのみ保存する。
  *
  * 使い方:
- *   php make-key.php --label my-editor --scope write
+ *   php make-key.php --label my-editor --scope write --wiki-user tgoto
  *   php make-key.php --label ai-reader --scope read --expires 2027-01-01 --ip 203.0.113.5
  *   php make-key.php --list
  *   php make-key.php --revoke my-editor
@@ -16,6 +16,9 @@
  *   PKWK_API_KEYS   keys.php のパス（最優先）
  *   PKWK_REST_DATA  データディレクトリ（bootstrap と同じ値を設定すれば keys.php の
  *                   場所が Web 側と一致する。省略時: rest-api-v2/data）
+ *
+ * 環境変数が使えない環境では rest-api-v2/config.local.php を置く。Web 側の
+ * bootstrap.php と同じ LocalConfig で解決するため、keys.php の場所が必ず一致する。
  *
  * License: GPL v2 or (at your option) any later version（PukiWiki 1.5.4 本体に準拠）
  * @version v2.0
@@ -27,19 +30,22 @@ if (php_sapi_name() !== 'cli') {
     exit('CLI only');
 }
 
-$keys_file = getenv('PKWK_API_KEYS')
-    ?: (getenv('PKWK_REST_DATA') ?: dirname(__DIR__) . '/data') . '/keys.php';
+// Web 側（bootstrap.php）と同じ解決ロジックを使う。ここがずれると
+// キーを作った場所と読む場所が食い違い、原因の分かりにくい 401 になる。
+require_once dirname(__DIR__) . '/lib/LocalConfig.php';
+$keys_file = LocalConfig::keysFile();
 
 // ---- 引数解析 -------------------------------------------------------------
 $args = array_slice($argv, 1);
 $opts = ['label' => null, 'scope' => null, 'expires' => null, 'ip' => null,
-         'list' => false, 'revoke' => null];
+         'wiki-user' => null, 'list' => false, 'revoke' => null];
 for ($i = 0; $i < count($args); $i++) {
     switch ($args[$i]) {
         case '--label':   $opts['label']  = $args[++$i] ?? null; break;
         case '--scope':   $opts['scope']  = $args[++$i] ?? null; break;
         case '--expires': $opts['expires'] = $args[++$i] ?? null; break;
         case '--ip':      $opts['ip']     = $args[++$i] ?? null; break;
+        case '--wiki-user': $opts['wiki-user'] = $args[++$i] ?? null; break;
         case '--list':    $opts['list']   = true; break;
         case '--revoke':  $opts['revoke'] = $args[++$i] ?? null; break;
         case '--help': case '-h':
@@ -54,9 +60,14 @@ function usage(): void
 {
     echo <<<TXT
 使い方:
-  キー作成: php make-key.php --label <名前> --scope <read|write> [--expires YYYY-MM-DD] [--ip <IP|CIDR>]
+  キー作成: php make-key.php --label <名前> --scope <read|write> [--wiki-user <名前>]
+                              [--expires YYYY-MM-DD] [--ip <IP|CIDR>]
   一覧    : php make-key.php --list
   失効    : php make-key.php --revoke <名前>
+
+  --wiki-user は、このキーが名乗る PukiWiki ユーザー名（pukiwiki.ini.php の
+  $auth_users のキー）。$edit_auth を有効にしているサイトでは、これを指定しないと
+  書き込みが全ページ 403 edit_forbidden になる。read 専用キーには不要。
 
 TXT;
 }
@@ -100,11 +111,13 @@ if ($opts['list']) {
         exit(0);
     }
     echo "keys.php: {$keys_file}\n\n";
-    printf("%-20s %-6s %-20s %-20s %s\n", 'LABEL', 'SCOPE', 'EXPIRES', 'IP_ALLOW', 'SHA256(先頭12)');
+    printf("%-20s %-6s %-12s %-20s %-20s %s\n",
+        'LABEL', 'SCOPE', 'WIKI_USER', 'EXPIRES', 'IP_ALLOW', 'SHA256(先頭12)');
     foreach ($keys as $k) {
-        printf("%-20s %-6s %-20s %-20s %s\n",
+        printf("%-20s %-6s %-12s %-20s %-20s %s\n",
             (string)($k['label'] ?? '?'),
             (string)($k['scope'] ?? '?'),
+            (string)(($k['wiki_user'] ?? '') !== '' ? $k['wiki_user'] : '(none)'),
             isset($k['expires_at']) && $k['expires_at'] !== null
                 ? date('Y-m-d H:i', (int)$k['expires_at']) : '(none)',
             (string)($k['ip_allow'] ?? '(none)'),
@@ -140,6 +153,16 @@ if (!preg_match('/^[A-Za-z0-9_\-\.]{1,64}$/', $opts['label'])) {
     fwrite(STDERR, "--label は英数字・ハイフン・アンダースコア・ドット（64字以内）で指定してください。\n");
     exit(1);
 }
+if ($opts['wiki-user'] !== null) {
+    if (!preg_match('/^[A-Za-z0-9_\-\.@]{1,64}$/', $opts['wiki-user'])) {
+        fwrite(STDERR, "--wiki-user は英数字・ハイフン・アンダースコア・ドット・@（64字以内）で指定してください。\n");
+        exit(1);
+    }
+    if ($opts['scope'] !== 'write') {
+        fwrite(STDERR, "--wiki-user は --scope write のときだけ意味があります（read キーは書き込まない）。\n");
+        exit(1);
+    }
+}
 foreach ($keys as $k) {
     if (($k['label'] ?? '') === $opts['label']) {
         fwrite(STDERR, "ラベル '{$opts['label']}' は既に存在します。--revoke してから作り直してください。\n");
@@ -165,6 +188,7 @@ $keys[] = [
     'scope'      => $opts['scope'],
     'expires_at' => $expires_at,
     'ip_allow'   => $opts['ip'],
+    'wiki_user'  => $opts['wiki-user'],
     'created_at' => time(),
 ];
 save_keys($keys_file, $keys);
@@ -173,7 +197,8 @@ echo "APIキーを作成しました。\n\n";
 echo "  label  : {$opts['label']}\n";
 echo "  scope  : {$opts['scope']}\n";
 echo "  expires: " . ($expires_at ? date('Y-m-d H:i', $expires_at) : '(無期限)') . "\n";
-echo "  ip     : " . ($opts['ip'] ?? '(制限なし)') . "\n\n";
+echo "  ip     : " . ($opts['ip'] ?? '(制限なし)') . "\n";
+echo "  wiki   : " . ($opts['wiki-user'] ?? '(未ログイン扱い)') . "\n\n";
 echo "┌─────────────────────────────────────────────────────────┐\n";
 echo "  {$raw_key}\n";
 echo "└─────────────────────────────────────────────────────────┘\n";

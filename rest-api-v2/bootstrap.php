@@ -67,7 +67,10 @@ $REST_REQUEST = [
 $REST_ARGV = $GLOBALS['argv'] ?? null;
 
 $REST_DIR      = __DIR__;
-$REST_DATA_DIR = getenv('PKWK_REST_DATA') ?: $REST_DIR . '/data';
+require_once $REST_DIR . '/lib/LocalConfig.php';
+// 環境変数 > config.local.php > 既定値。共有ホスティングで SetEnv が使えない
+// 環境のために config.local.php のフォールバックを用意している。
+$REST_DATA_DIR = LocalConfig::dataDir();
 
 // -------------------------------------------------------------------------
 // 1. PukiWiki 本体の検出とロード
@@ -205,7 +208,7 @@ if (rest_data_dir_is_exposed($REST_DATA_DIR, $_SERVER, PHP_SAPI)
 // -------------------------------------------------------------------------
 // 3. API キー設定と保護ページ
 // -------------------------------------------------------------------------
-$REST_KEYS_FILE = getenv('PKWK_API_KEYS') ?: $REST_DATA_DIR . '/keys.php';
+$REST_KEYS_FILE = LocalConfig::keysFile();
 
 $REST_PROTECTED_PAGES = ['FrontPage', 'MenuBar'];
 if (($env = getenv('PKWK_PROTECTED_PAGES')) !== false && $env !== '') {

@@ -204,7 +204,8 @@ $router->put('/pages/{page...}', function (array $vars) use ($auth): Response {
         $content,
         $base_sha1,
         $key['label'],
-        $REST_REQUEST['remote_addr']
+        $REST_REQUEST['remote_addr'],
+        $key['wiki_user'] ?? ''
     );
 
     $result['note'] = 'Content may have been normalized by PukiWiki '

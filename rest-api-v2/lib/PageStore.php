@@ -151,6 +151,40 @@ final class PageStore
     }
 
     // -------------------------------------------------------------------------
+    // 本体経由の保存
+    // -------------------------------------------------------------------------
+
+    /**
+     * PukiWiki 本体経由で保存する。
+     *
+     * md.inc.php（Markdown プラグイン）を入れているサイトでは page_write() を直接
+     * 呼んではいけない。page_write() は make_str_rules() を通すため、
+     *   - '*' 始まりの行（Markdown の箇条書き・強調）に見出しアンカー [#xxxxxxx] が混入する
+     *   - &now; &date; &time; 等の $str_rules マクロが実値に置換される（★不可逆★）
+     * という破壊が起きる。前者は描画側で修復できるが、後者は復元できない。
+     *
+     * md.inc.php v0.4+ は外部ライター向けに md_page_write() を提供している。
+     * page_write() と同一シグネチャで、#md ページのときだけ $str_rules と
+     * $fixed_heading_anchor を一時無効化し、非 Markdown ページは page_write() へ
+     * 素通しで委譲する。よって存在すれば無条件に使ってよい。
+     */
+    private static function writeThroughPukiWiki(string $page, string $body): void
+    {
+        // md.inc.php は通常ロードされていない（bootstrap はプラグインを読まない）。
+        // exist_plugin() が require_once してくれる。md.inc.php のトップレベルは
+        // 定数と関数定義のみで副作用がなく、Markdown パーサーの読み込みは変換時まで
+        // 遅延されるため、ロードのコストは無視できる。
+        if (function_exists('exist_plugin')) {
+            exist_plugin('md');
+        }
+        if (function_exists('md_page_write')) {
+            md_page_write($page, $body);
+            return;
+        }
+        page_write($page, $body);
+    }
+
+    // -------------------------------------------------------------------------
     // 閲覧認可
     // -------------------------------------------------------------------------
 
@@ -207,6 +241,8 @@ final class PageStore
      * @param string $base_sha1 読んだ時点の sha1。新規作成は self::EMPTY_SHA1
      * @param string $actor     操作者（監査ログ・#author 行に記録）
      * @param string $ip        クライアント IP（監査ログ用）
+     * @param string $wiki_user このキーが「どの PukiWiki ユーザーとして書くか」。
+     *                          空なら従来どおり未ログイン扱い（$edit_auth 対象ページは fail-closed）。
      *
      * @return array{page: string, is_new: bool, changed: bool, new_sha1: string,
      *               size: int, mtime: int, snapshot: ?string}
@@ -218,7 +254,8 @@ final class PageStore
         string $new_body,
         string $base_sha1,
         string $actor,
-        string $ip = ''
+        string $ip = '',
+        string $wiki_user = ''
     ): array {
         $this->validatePageName($page);
 
@@ -300,48 +337,88 @@ final class PageStore
             }
             $is_new = !$exists;
 
-            // PukiWiki の凍結・編集可否チェック
-            // （page_write() 自身は PKWK_READONLY しか見ないため、ここで明示的に行う）
-            if (function_exists('is_freeze') && is_freeze($page)) {
-                $this->denied($page, $actor, $ip, 'page_frozen');
-                throw new ApiException(403, "Page '{$page}' is frozen.", 'page_frozen');
-            }
-            if (function_exists('is_editable') && !is_editable($page)) {
-                $this->denied($page, $actor, $ip, 'page_not_editable');
-                throw new ApiException(403, "Page '{$page}' is not editable.", 'page_not_editable');
-            }
-            // $edit_auth による編集認可（Web UI では edit プラグインが is_page_writable() で
-            // 強制する。API にはログインユーザーがいないため、$edit_auth_pages に該当する
-            // ページは一律拒否 = fail-closed。$read_auth の read 側拒否と対称）
-            if (function_exists('is_page_writable') && !is_page_writable($page)) {
-                $this->denied($page, $actor, $ip, 'edit_forbidden');
-                throw new ApiException(
-                    403,
-                    "Page '{$page}' is protected by edit authentication (\$edit_auth).",
-                    'edit_forbidden'
-                );
-            }
-
-            // 書き込み前スナップショット（既存内容の退避。同一 sha1 は自動スキップ）
-            if ($exists) {
-                $this->snapshots->saveIfNew($page, $old_content);
-            }
-
-            // 書き込み本体
-            if (function_exists('page_write')) {
-                // #author 行に API 操作者を記録する（Web UI のログインユーザーに相当）
-                $saved_user     = $GLOBALS['auth_user'] ?? null;
-                $saved_fullname = $GLOBALS['auth_user_fullname'] ?? null;
+            // ここから page_write() 完了までを、PukiWiki のユーザー identity を差し替えた
+            // 状態で実行する。認可判定（is_editable / is_page_writable）と #author 行の
+            // 両方が $auth_user を見るため、save/restore は 1 本にまとめる
+            // （入れ子にすると例外パスで復元順が狂う）。
+            $saved_identity = [
+                $GLOBALS['auth_user']          ?? null,
+                $GLOBALS['auth_user_fullname'] ?? null,
+                $GLOBALS['auth_user_groups']   ?? null,
+            ];
+            if ($wiki_user !== '') {
+                // 実在の PukiWiki ユーザーとして振る舞い、$edit_auth を正規に満たす
+                // （バイパスではない。$edit_auth_pages に該当しなければ従来どおり拒否される）
+                $GLOBALS['auth_user'] = $wiki_user;
+                // ラベルを fullname に残し「どのキーで書いたか」の追跡性を保つ
+                $GLOBALS['auth_user_fullname'] = $wiki_user . ' (API: ' . $actor . ')';
+                $GLOBALS['auth_user_groups']   = function_exists('get_groups_from_username')
+                    ? get_groups_from_username($wiki_user)
+                    : [$wiki_user];
+            } else {
+                // 未ログイン扱い。#author 行にはキーのラベルだけを記録する。
+                // ここで auth_user_groups を空配列にしておくことが重要:
+                //   _is_page_accessible()（lib/auth.php:289-295）は $auth_user が
+                //   非空だと「!$auth_user」の早期 FALSE を通り抜け、そのまま
+                //   array_intersect($auth_user_groups, ...) に進む。null のままだと
+                //   TypeError になり、[] なら交差が空になって FALSE = fail-closed。
+                //   ラベルは実在の PukiWiki ユーザーではないので、これが正しい。
                 $GLOBALS['auth_user']          = $actor;
                 $GLOBALS['auth_user_fullname'] = $actor . ' (API)';
-                try {
-                    page_write($page, $new_body);
-                } finally {
-                    $GLOBALS['auth_user']          = $saved_user;
-                    $GLOBALS['auth_user_fullname'] = $saved_fullname;
+                $GLOBALS['auth_user_groups']   = [];
+            }
+
+            try {
+                // 閲覧できないページは書き込めない（Web UI の edit と同じ前提）。
+                // $read_auth と $edit_auth は同じ _is_page_accessible() を使うため、
+                // identity を設定した「後」に判定して wiki_user の閲覧権限を正しく
+                // 反映させる。ここを飛ばすと、write スコープのキーが「読めないページ」
+                // を作成・上書きでき、さらに書き込み前スナップショットとして旧内容が
+                // data/snapshots/ に退避されてしまう（閲覧制限の迂回）。
+                $this->assertReadable($page);
+
+                // PukiWiki の凍結・編集可否チェック
+                // （page_write() 自身は PKWK_READONLY しか見ないため、ここで明示的に行う）
+                if (function_exists('is_freeze') && is_freeze($page)) {
+                    $this->denied($page, $actor, $ip, 'page_frozen');
+                    throw new ApiException(403, "Page '{$page}' is frozen.", 'page_frozen');
                 }
-            } else {
-                self::atomicWrite($file, $new_body);
+                if (function_exists('is_editable') && !is_editable($page)) {
+                    $this->denied($page, $actor, $ip, 'page_not_editable');
+                    throw new ApiException(403, "Page '{$page}' is not editable.", 'page_not_editable');
+                }
+                // $edit_auth による編集認可（Web UI では edit プラグインが is_page_writable() で
+                // 強制する）。キーに wiki_user が無ければログインユーザー不在として
+                // $edit_auth_pages 該当ページは一律拒否 = fail-closed。
+                if (function_exists('is_page_writable') && !is_page_writable($page)) {
+                    $this->denied($page, $actor, $ip, 'edit_forbidden');
+                    throw new ApiException(
+                        403,
+                        "Page '{$page}' is protected by edit authentication (\$edit_auth)." .
+                        ($wiki_user === ''
+                            ? ' Issue the API key with --wiki-user to write as a PukiWiki user.'
+                            : " The wiki user '{$wiki_user}' is not permitted to edit this page."),
+                        'edit_forbidden'
+                    );
+                }
+
+                // 書き込み前スナップショット（既存内容の退避。同一 sha1 は自動スキップ）
+                if ($exists) {
+                    $this->snapshots->saveIfNew($page, $old_content);
+                }
+
+                // 書き込み本体
+                if (function_exists('page_write')) {
+                    self::writeThroughPukiWiki($page, $new_body);
+                } else {
+                    self::atomicWrite($file, $new_body);
+                }
+            } finally {
+                [
+                    $GLOBALS['auth_user'],
+                    $GLOBALS['auth_user_fullname'],
+                    $GLOBALS['auth_user_groups'],
+                ] = $saved_identity;
             }
 
             // 実ファイルを再読込して確定内容を得る

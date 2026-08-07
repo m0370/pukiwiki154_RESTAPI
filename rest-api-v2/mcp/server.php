@@ -37,10 +37,13 @@ ini_set('display_errors', 'stderr');
 require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/McpHandler.php';
 
-$actor   = (string)(getenv('PKWK_MCP_ACTOR') ?: 'mcp-client');
-$handler = new McpHandler($REST_PAGES, $actor);
+$actor     = (string)(getenv('PKWK_MCP_ACTOR') ?: 'mcp-client');
+// $edit_auth を有効にしたサイトでは、名乗る PukiWiki ユーザー名の指定が必須
+$wiki_user = (string)(getenv('PKWK_MCP_WIKI_USER') ?: '');
+$handler   = new McpHandler($REST_PAGES, $actor, $wiki_user);
 
-fwrite(STDERR, "[pukiwiki-mcp] v2 server ready (actor={$actor}, pukiwiki="
+fwrite(STDERR, "[pukiwiki-mcp] v2 server ready (actor={$actor}"
+    . ($wiki_user !== '' ? ", wiki_user={$wiki_user}" : '') . ', pukiwiki='
     . ($REST_PKWK_LOADED ? 'loaded' : 'standalone') . ")\n");
 
 while (ob_get_level() > 0) {
