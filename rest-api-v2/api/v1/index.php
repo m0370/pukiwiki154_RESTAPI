@@ -172,68 +172,6 @@ $router->get('/pages/{page...}/revisions/{rev}', function (array $vars) use ($au
     ]);
 });
 
-// -------------------------------------------------------------------------
-// 下書き（draft）
-//
-// 公開（publish）は意図的に用意していない。下書きを本ページへ反映するのは
-// Web UI の役目で、API から公開できないこと自体が安全装置になっている。
-// これらのルートは /pages/{page...} より「前」に登録すること
-// （{page...} は .+ なので後ろに置くと飲み込まれる）。
-// -------------------------------------------------------------------------
-
-// GET /drafts — 下書きのあるページ一覧
-$router->get('/drafts', function () use ($auth): Response {
-    global $REST_REQUEST, $REST_PAGES;
-    $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
-
-    $limit  = rest_query_int('limit', 100, 1, 1000);
-    $offset = rest_query_int('offset', 0, 0, PHP_INT_MAX);
-    return Response::ok($REST_PAGES->listDrafts($limit, $offset));
-});
-
-// GET /pages/{page}/draft — 下書きの取得
-$router->get('/pages/{page...}/draft', function (array $vars) use ($auth): Response {
-    global $REST_REQUEST, $REST_PAGES;
-    $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
-    return Response::ok($REST_PAGES->readDraft($vars['page']));
-});
-
-// PUT /pages/{page}/draft — 下書きの保存（全文置換。本ページには触れない）
-$router->put('/pages/{page...}/draft', function (array $vars) use ($auth): Response {
-    global $REST_REQUEST, $REST_PAGES;
-    $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_WRITE, $REST_REQUEST['remote_addr']);
-
-    $body    = rest_json_body();
-    $content = (string)($body['content'] ?? '');
-    if ($content === '') {
-        throw new ApiException(400, '"content" (non-empty string) is required', 'missing_content');
-    }
-
-    $result = $REST_PAGES->writeDraft(
-        $vars['page'],
-        $content,
-        $key['label'],
-        $REST_REQUEST['remote_addr'],
-        $key['wiki_user'] ?? ''
-    );
-    $result['note'] = 'Draft saved. The live page is unchanged. '
-                    . 'Publish it from the PukiWiki web UI when ready.';
-    return Response::ok($result);
-});
-
-// DELETE /pages/{page}/draft — 下書きの破棄
-$router->delete('/pages/{page...}/draft', function (array $vars) use ($auth): Response {
-    global $REST_REQUEST, $REST_PAGES;
-    $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_WRITE, $REST_REQUEST['remote_addr']);
-
-    return Response::ok($REST_PAGES->deleteDraft(
-        $vars['page'],
-        $key['label'],
-        $REST_REQUEST['remote_addr'],
-        $key['wiki_user'] ?? ''
-    ));
-});
-
 // GET /pages/{page} — ページ取得
 $router->get('/pages/{page...}', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;

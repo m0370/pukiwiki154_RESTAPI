@@ -136,45 +136,6 @@ PukiWiki 標準の backup/diff とは独立している。
 
 ---
 
-## 下書き（draft）[read / write]
-
-サイト側に `lib/draft.php` がある場合のみ。無ければ 501 `draft_unsupported`。
-下書きは本ページとは別ファイルで、**本ページには一切影響しない**。
-`page_write()` を通らないので本文は無加工（`#author` 行・見出しアンカー・
-マクロ展開のいずれも起きない）。
-
-**公開の API は無い**（下書きを本ページへ反映するのは Web UI の役目）。
-
-| メソッド | パス | スコープ |
-|---|---|---|
-| `GET` | `/drafts?limit=N&offset=N` | read |
-| `GET` | `/pages/{page}/draft` | read |
-| `PUT` | `/pages/{page}/draft` | write |
-| `DELETE` | `/pages/{page}/draft` | write |
-
-`GET /pages/{page}/draft`:
-
-```json
-{
-  "page": "日記/2026年/8月7日",
-  "content": "#md\n# 推敲中\n",
-  "saved": "2026-08-07T13:01:29+09:00",
-  "digest": "d41d8cd98f00b204e9800998ecf8427e",
-  "updated_at": "2026-08-07T22:01:29+09:00"
-}
-```
-
-- `saved` — PukiWiki が下書きに記録した文字列をそのまま返す（`get_date_atom(UTIME)` 由来）
-- `digest` — 保存時点の**本ページ本文**の md5。本ページが動いたかの判定に使える
-  （REST の `base_sha1` とは別物。あちらは生バイトの sha1）
-- `updated_at` — 下書きファイルの実 mtime
-
-`PUT` は全文置換。**空本文は 400 `empty_draft`**（空の下書きを Web UI から公開すると
-ページ削除になるため）。破棄は `DELETE`。
-
-書き込みには本ページの編集権限が必要（`assertReadable` + `is_freeze` +
-`is_editable` + `is_page_writable`）。楽観ロックは無い。
-
 ## 典型的なワークフロー
 
 ### 既存ページの編集

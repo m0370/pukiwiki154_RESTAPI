@@ -32,7 +32,6 @@ function readBody(req) {
 export function createMockRest() {
   const pages = new Map();     // name -> { content, frozen }
   const revisions = new Map(); // name -> [{ id, ts, time, sha1, gz_size, content }]
-  const drafts = new Map();    // name -> { content, saved }
   const state = {
     lastPath: null,      // ブリッジが送ったデコード済みパス（エンコード検証用）
     maxBytes: 1024 * 1024,
@@ -100,45 +99,6 @@ export function createMockRest() {
     }
 
     let mm;
-
-    // --- 下書き（ページ取得より先にマッチさせる）---
-    if (path === '/drafts' && req.method === 'GET') {
-      const list = [...drafts.entries()].map(([name, d]) => ({
-        page: name, updated_at: d.saved,
-      }));
-      return json(200, { total: list.length, drafts: list });
-    }
-    if ((mm = /^\/pages\/(.+)\/draft$/.exec(path))) {
-      const name = mm[1];
-      if (req.method === 'GET') {
-        const d = drafts.get(name);
-        if (!d) return error(404, 'draft_not_found', `No draft for page '${name}'.`);
-        return json(200, { page: name, content: d.content, saved: d.saved, digest: 'deadbeef', updated_at: d.saved });
-      }
-      if (req.method === 'PUT') {
-        if (scope !== 'write') return error(403, 'insufficient_scope', 'This endpoint requires write scope');
-        let body;
-        try {
-          body = JSON.parse(await readBody(req));
-        } catch {
-          return error(400, 'invalid_json', 'Request body must be a JSON object');
-        }
-        const content = body.content;
-        if (typeof content !== 'string' || content === '') {
-          return error(400, 'missing_content', 'content is required');
-        }
-        if (content.trim() === '') return error(400, 'empty_draft', 'Empty draft is not allowed');
-        const saved = '2026-08-07T21:00:00+09:00';
-        drafts.set(name, { content, saved });
-        return json(200, { page: name, size: Buffer.byteLength(content, 'utf8'), saved, updated_at: saved });
-      }
-      if (req.method === 'DELETE') {
-        if (scope !== 'write') return error(403, 'insufficient_scope', 'This endpoint requires write scope');
-        if (!drafts.has(name)) return error(404, 'draft_not_found', `No draft for page '${name}'.`);
-        drafts.delete(name);
-        return json(200, { page: name, deleted: true });
-      }
-    }
 
     // GET /pages/{page}/revisions（一覧）— ページ取得より先にマッチさせる
     if ((mm = /^\/pages\/(.+)\/revisions$/.exec(path)) && req.method === 'GET') {
@@ -269,5 +229,5 @@ export function createMockRest() {
   });
   const close = () => new Promise((resolve) => server.close(resolve));
 
-  return { server, pages, revisions, drafts, state, seed, listen, close };
+  return { server, pages, revisions, state, seed, listen, close };
 }

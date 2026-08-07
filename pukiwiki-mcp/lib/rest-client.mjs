@@ -118,22 +118,4 @@ export class RestClient {
       '/pages/' + RestClient.encodePagePath(page) + '/revisions/' + encodeURIComponent(rev));
   }
 
-  // --- 下書き（公開は Web UI の役目なので publish API は無い）---
-
-  readDraft(page) {
-    return this.request('GET', '/pages/' + RestClient.encodePagePath(page) + '/draft');
-  }
-
-  writeDraft(page, content) {
-    return this.request('PUT', '/pages/' + RestClient.encodePagePath(page) + '/draft',
-      { body: { content } });
-  }
-
-  deleteDraft(page) {
-    return this.request('DELETE', '/pages/' + RestClient.encodePagePath(page) + '/draft');
-  }
-
-  listDrafts(limit, offset) {
-    return this.request('GET', '/drafts', { query: { limit, offset } });
-  }
 }
