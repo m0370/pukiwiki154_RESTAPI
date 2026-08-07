@@ -196,6 +196,25 @@ final class PageStore
     }
 
     /**
+     * 下書きファイルの実 mtime を返す（無ければ 0）。
+     *
+     * get_draft_filetime()（lib/draft.php:152-155）は PukiWiki の慣習で
+     * filemtime() - LOCALZONE を返す。これは format_date() に渡して
+     * LOCALZONE を足し戻す前提の値で、そのまま date('c') に渡すと
+     * タイムゾーン分（JST なら 9 時間）ずれる。
+     * ページ側の updated_at は生の filemtime なので、こちらも合わせる。
+     */
+    private static function draftMtime(string $page): int
+    {
+        if (!function_exists('get_draft_filename')) {
+            return 0;
+        }
+        $file = get_draft_filename($page);
+        clearstatcache(true, $file);
+        return is_file($file) ? (int)filemtime($file) : 0;
+    }
+
+    /**
      * 下書きを読む。無ければ 404。
      *
      * @return array{page: string, content: string, saved: ?string, digest: ?string, updated_at: ?string}
@@ -216,7 +235,7 @@ final class PageStore
         if ($draft === false) {
             throw new ApiException(500, "Failed to read draft for '{$page}'.", 'draft_read_failed');
         }
-        $mtime = get_draft_filetime($page);
+        $mtime = self::draftMtime($page);
 
         return [
             'page'       => $page,
@@ -280,7 +299,7 @@ final class PageStore
             if (draft_write($page, $body) === false) {
                 throw new ApiException(500, "Failed to write draft for '{$page}'.", 'draft_write_failed');
             }
-            $mtime = get_draft_filetime($page);
+            $mtime = self::draftMtime($page);
             $meta  = get_draft_with_meta($page, true, true);
 
             $this->audit->log('draft_written', [
@@ -349,7 +368,7 @@ final class PageStore
             if (!$this->canRead($page)) {
                 continue;
             }
-            $mtime = get_draft_filetime($page);
+            $mtime = self::draftMtime($page);
             $all[] = ['page' => $page, 'updated_at' => $mtime ? date('c', $mtime) : null];
         }
         // get_draft_list() は既に更新時刻の降順（lib/draft.php:249-251）

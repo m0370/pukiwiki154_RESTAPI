@@ -209,6 +209,10 @@ PUT  /pages/{page}                 全文書き込み（CAS 必須）    [write]
 GET  /pages/{page}/revisions       スナップショット一覧        [read]
 GET  /pages/{page}/revisions/{id}  過去版の取得               [read]
 GET  /search?q=...                 全文検索（日本語対応）      [read]
+GET  /drafts                       下書きのあるページ一覧      [read]
+GET  /pages/{page}/draft           下書きの取得                [read]
+PUT  /pages/{page}/draft           下書きの保存                [write]
+DELETE /pages/{page}/draft         下書きの破棄                [write]
 ```
 
 階層ページ名（`親/子/孫`）はパスにそのまま書けます（`%2F` エンコード不要）。
@@ -310,6 +314,52 @@ curl -H "Authorization: Bearer $KEY" "$BASE/pages/メモ/今日/revisions/178294
 
 エラーコードの一覧など詳細は [rest-api-v2/docs/api-reference.md](rest-api-v2/docs/api-reference.md) を参照してください。
 
+
+### 4.6 下書き（draft）
+
+サイト側に下書き機能（`lib/draft.php`）がある場合のみ使えます。無いサイトでは
+501 `draft_unsupported` を返します。
+
+**下書きは本ページとは別のファイルに保存され、本ページには一切影響しません。**
+`page_write()` を通らないため本文は完全に無加工で、`#author` 行も見出しアンカーも
+付かず、`&now;` などのマクロも展開されません。
+
+```bash
+# 人間が書きかけた下書きを読む
+curl -H "Authorization: Bearer $KEY" "$BASE/pages/日記/2026年/8月7日/draft"
+
+# 推敲して下書きに書き戻す（本ページは変わらない）
+curl -X PUT "$BASE/pages/日記/2026年/8月7日/draft" \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"content":"#md\n# 推敲しました\n"}'
+
+# 下書きのあるページを一覧する
+curl -H "Authorization: Bearer $KEY" "$BASE/drafts"
+
+# 下書きを破棄する
+curl -X DELETE "$BASE/pages/日記/2026年/8月7日/draft" -H "Authorization: Bearer $KEY"
+```
+
+**公開（publish）の API はありません。** 下書きを本ページへ反映するのは Web UI の
+役目です。「AI は下書きまで、公開は人間」という境界そのものを安全装置として
+使う設計で、これは意図的な制限です。
+
+知っておくべき挙動:
+
+- 下書きは全文置換です。差分更新はありません
+- **空の下書きは 400 で拒否します。** PukiWiki は空の下書きを公開するとページを
+  削除するため、あとで Web UI から公開した瞬間にページが消えるのを防いでいます。
+  破棄したいときは `DELETE` を使ってください
+- 書き込みには**本ページの編集権限**が必要です（Web UI の draft プラグインと同じ）。
+  `$edit_auth` を有効にしたサイトでは `--wiki-user` 付きのキーが要ります
+- 凍結ページ・保護ページ・`:` システムページには下書きを書けません
+- 楽観ロックはありません。下書きは一時データという位置づけです。`GET` が返す
+  `saved`（保存時刻）と `digest`（保存時点の本ページの md5）で必要な判定はできます
+- `saved` は PukiWiki が下書きファイルに記録した文字列をそのまま返します
+  （`get_date_atom(UTIME)` 由来。タイムゾーン表記が実時刻とずれるサイトがありますが、
+  Web UI が書いた既存の下書きと同じ体系です）。実際の更新時刻は `updated_at` を
+  参照してください
+
 ## 5. MCP サーバー（Claude 連携）
 
 Claude Desktop / Claude Code から Wiki を直接読み書きできます。2 つの方式があります。
@@ -388,6 +438,10 @@ read スコープのキーなら閲覧・検索のみ、write スコープなら
 | `wiki_write_page` | 全文書き込み（base_sha1 必須・凍結/保護ページ拒否） | ✓ | ✓ |
 | `wiki_page_revisions` | API 書き込みスナップショットの一覧 | — | ✓ |
 | `wiki_read_revision`  | 過去スナップショットの本文取得 | — | ✓ |
+| `wiki_read_draft`  | 下書きの取得 | — | ✓ |
+| `wiki_write_draft` | 下書きの保存（本ページは不変） | — | ✓ |
+| `wiki_list_drafts` | 下書きのあるページ一覧 | — | ✓ |
+| `wiki_delete_draft`| 下書きの破棄 | — | ✓ |
 
 ## 6. 書き込みの安全装置
 
