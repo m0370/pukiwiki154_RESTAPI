@@ -132,17 +132,54 @@ test('initialize がプロトコル版と serverInfo を返す', async () => {
   assert.equal(resp.result.serverInfo.name, 'pukiwiki-mcp');
 });
 
-test('tools/list が 6 ツールを返す', async () => {
+test('tools/list が 10 ツールを返す', async () => {
   const resp = await bridge.request('tools/list');
   const names = resp.result.tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
+    'wiki_delete_draft',
+    'wiki_list_drafts',
     'wiki_list_pages',
     'wiki_page_revisions',
+    'wiki_read_draft',
     'wiki_read_page',
     'wiki_read_revision',
     'wiki_search',
+    'wiki_write_draft',
     'wiki_write_page',
   ]);
+});
+
+// --- 下書き -----------------------------------------------------------------
+
+test('下書きは保存・取得・一覧・削除できる（本ページは変わらない）', async () => {
+  const page = 'ドラフト/往復';
+  const before = await bridge.call('wiki_read_page', { page: 'FrontPage' });
+
+  const w = await bridge.call('wiki_write_draft', { page, content: '#md\n# 推敲中\n&now;\n' });
+  assert.match(w, /Draft saved/);
+  assert.match(w, /live page is UNCHANGED/);
+
+  const r = await bridge.call('wiki_read_draft', { page });
+  assert.match(r, /# 推敲中/);
+  assert.match(r, /&now;/, 'マクロが展開されずそのまま返る');
+
+  const l = await bridge.call('wiki_list_drafts', {});
+  assert.match(l, /ドラフト\/往復/);
+
+  const d = await bridge.call('wiki_delete_draft', { page });
+  assert.match(d, /discarded/);
+
+  const after = await bridge.call('wiki_read_page', { page: 'FrontPage' });
+  assert.equal(after, before, '下書き操作で本ページは変化しない');
+});
+
+test('存在しない下書きの取得はエラーとして返る', async () => {
+  const t = await bridge.call('wiki_read_draft', { page: 'ドラフト/無い' }, { expectError: true });
+  assert.match(t, /Draft read failed/);
+});
+
+test('空の下書きは拒否される', async () => {
+  await bridge.call('wiki_write_draft', { page: 'ドラフト/空', content: '   \n' }, { expectError: true });
 });
 
 test('ping が空オブジェクトを返す', async () => {

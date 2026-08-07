@@ -120,6 +120,14 @@ if (is_file($pkwk_root . '/pukiwiki.ini.php') && is_file($pkwk_root . '/lib/init
     require LIB_DIR . 'init.php';
     if ($notify) require LIB_DIR . 'mail.php';
 
+    // 下書き機能（サイト独自拡張）。本体 1.5.4 には無いので存在すれば読む。
+    // lib/html.php も draft.php を require するが、それは edit_form() の本体内
+    // （関数を呼ばないと発火しない）なので、ここで明示的にロードする。
+    // DRAFT_DIR は pukiwiki.ini.php で定義されるため init.php の後であること。
+    if (defined('DRAFT_DIR') && is_file(LIB_DIR . 'draft.php')) {
+        require_once LIB_DIR . 'draft.php';
+    }
+
     $REST_PKWK_LOADED = true;
 
     // DATA_DIR は通常 'wiki/'（相対）。絶対パスに正規化する。
