@@ -151,6 +151,329 @@ final class PageStore
     }
 
     // -------------------------------------------------------------------------
+    // 下書き（サイト独自の draft 機能。lib/draft.php があるときだけ使える）
+    //
+    // 公開（publish）は API から行わない。下書きを本ページへ反映するのは Web UI の
+    // 役目で、API から公開できないこと自体が安全装置になっている。
+    // 下書きは page_write() を通らない（draft_write() が本文をそのまま書く）ため、
+    // $str_rules による &now; 等の破壊は原理的に起きない。
+    // -------------------------------------------------------------------------
+
+    /** 下書き機能が使えるか（PukiWiki 本体 + サイト独自の lib/draft.php が必要） */
+    public static function draftAvailable(): bool
+    {
+        return defined('DRAFT_DIR')
+            && function_exists('has_draft')
+            && function_exists('draft_write')
+            && function_exists('draft_delete')
+            && function_exists('get_draft_with_meta')
+            && function_exists('get_draft_list');
+    }
+
+    /** 使えない環境なら 501 を投げる */
+    private static function assertDraftAvailable(): void
+    {
+        if (!self::draftAvailable()) {
+            throw new ApiException(
+                501,
+                'Draft support is not available on this wiki (lib/draft.php not found).',
+                'draft_unsupported'
+            );
+        }
+    }
+
+    /**
+     * ページ名を下書き側の正規形に揃える。
+     *
+     * draft_write() だけが strip_bracket() を掛け（lib/draft.php:168）、
+     * get_draft_filename() / has_draft() / draft_delete() は掛けない（:143）。
+     * この非対称のせいで [[Foo]] 形式だと書き込み先と読み出し先が食い違う。
+     * REST 側で先に正規化して、全操作のパスを一致させる。
+     */
+    private static function draftPageName(string $page): string
+    {
+        return function_exists('strip_bracket') ? strip_bracket($page) : $page;
+    }
+
+    /**
+     * 下書きファイルの実 mtime を返す（無ければ 0）。
+     *
+     * get_draft_filetime()（lib/draft.php:152-155）は PukiWiki の慣習で
+     * filemtime() - LOCALZONE を返す。これは format_date() に渡して
+     * LOCALZONE を足し戻す前提の値で、そのまま date('c') に渡すと
+     * タイムゾーン分（JST なら 9 時間）ずれる。
+     * ページ側の updated_at は生の filemtime なので、こちらも合わせる。
+     */
+    private static function draftMtime(string $page): int
+    {
+        if (!function_exists('get_draft_filename')) {
+            return 0;
+        }
+        $file = get_draft_filename($page);
+        clearstatcache(true, $file);
+        return is_file($file) ? (int)filemtime($file) : 0;
+    }
+
+    /**
+     * 下書きを読む。無ければ 404。
+     *
+     * @return array{page: string, content: string, saved: ?string, digest: ?string, updated_at: ?string}
+     */
+    public function readDraft(string $page): array
+    {
+        self::assertDraftAvailable();
+        $this->validatePageName($page);
+        $this->assertReadable($page);
+
+        $page = self::draftPageName($page);
+        // get_draft_with_meta() は不在時に FALSE ではなく「空の正常配列」を返す
+        // （lib/draft.php:64-66）ため、has_draft() で先に判定する必要がある
+        if (!has_draft($page)) {
+            throw new ApiException(404, "No draft for page '{$page}'.", 'draft_not_found');
+        }
+        $draft = get_draft_with_meta($page, true, true);
+        if ($draft === false) {
+            throw new ApiException(500, "Failed to read draft for '{$page}'.", 'draft_read_failed');
+        }
+        $mtime = self::draftMtime($page);
+
+        return [
+            'page'       => $page,
+            'content'    => (string)$draft['content'],
+            // 下書き保存時刻（draft_write() が #draft_saved: に記録した ATOM 文字列）
+            'saved'      => $draft['meta']['saved'] ?? null,
+            // 保存時点の「本ページ本文」の md5。本ページが変わったかの判定に使える
+            // （REST の base_sha1 とは別物: あちらは生バイトの sha1）
+            'digest'     => $draft['meta']['digest'] ?? null,
+            'updated_at' => $mtime ? date('c', $mtime) : null,
+        ];
+    }
+
+    /**
+     * 下書きを書く（全文置換）。本ページには一切触れない。
+     *
+     * @return array{page: string, size: int, saved: ?string, updated_at: ?string}
+     */
+    public function writeDraft(
+        string $page,
+        string $body,
+        string $actor,
+        string $ip = '',
+        string $wiki_user = ''
+    ): array {
+        self::assertDraftAvailable();
+        $this->validatePageName($page);
+
+        // 空の下書きを拒否する理由:
+        // plugin_draft_publish_write()（plugin/draft.inc.php:263-265）は空または
+        // '#md' だけの下書きを page_write($page, '') に渡し、これは PukiWiki の
+        // ページ削除になる。API で空の下書きを作れると、あとで人間が Web UI で
+        // 公開した瞬間にページが消える。
+        if (trim($body) === '') {
+            throw new ApiException(
+                400,
+                'Empty draft is not allowed: publishing it from the web UI would delete the page. '
+                . 'Use DELETE to discard a draft.',
+                'empty_draft'
+            );
+        }
+        $max_body = self::maxBodyBytes();
+        if (strlen($body) > $max_body) {
+            throw new ApiException(
+                413,
+                "Draft exceeds the maximum size ({$max_body} bytes).",
+                'content_too_large'
+            );
+        }
+        if (defined('PKWK_READONLY') && PKWK_READONLY) {
+            throw new ApiException(403, 'This wiki is read-only (PKWK_READONLY).', 'wiki_readonly');
+        }
+
+        $page = self::draftPageName($page);
+
+        return $this->withIdentity($actor, $wiki_user, function () use ($page, $body, $actor, $ip, $wiki_user): array {
+            // 下書きも本ページの編集権限を要求する（Web UI の draft プラグインが
+            // check_editable() を要求しているのに合わせる。plugin/draft.inc.php:139,180）
+            $this->assertWritable($page, $actor, $ip, $wiki_user);
+
+            if (draft_write($page, $body) === false) {
+                throw new ApiException(500, "Failed to write draft for '{$page}'.", 'draft_write_failed');
+            }
+            $mtime = self::draftMtime($page);
+            $meta  = get_draft_with_meta($page, true, true);
+
+            $this->audit->log('draft_written', [
+                'page'  => $page,
+                'actor' => $actor,
+                'ip'    => $ip,
+                'size'  => strlen($body),
+            ]);
+
+            return [
+                'page'       => $page,
+                'size'       => strlen($body),
+                'saved'      => is_array($meta) ? ($meta['meta']['saved'] ?? null) : null,
+                'updated_at' => $mtime ? date('c', $mtime) : null,
+            ];
+        });
+    }
+
+    /** 下書きを破棄する。無ければ 404。本ページには触れない。 */
+    public function deleteDraft(
+        string $page,
+        string $actor,
+        string $ip = '',
+        string $wiki_user = ''
+    ): array {
+        self::assertDraftAvailable();
+        $this->validatePageName($page);
+        if (defined('PKWK_READONLY') && PKWK_READONLY) {
+            throw new ApiException(403, 'This wiki is read-only (PKWK_READONLY).', 'wiki_readonly');
+        }
+
+        $page = self::draftPageName($page);
+
+        return $this->withIdentity($actor, $wiki_user, function () use ($page, $actor, $ip, $wiki_user): array {
+            $this->assertWritable($page, $actor, $ip, $wiki_user);
+
+            if (!has_draft($page)) {
+                throw new ApiException(404, "No draft for page '{$page}'.", 'draft_not_found');
+            }
+            if (draft_delete($page) === false) {
+                throw new ApiException(500, "Failed to delete draft for '{$page}'.", 'draft_delete_failed');
+            }
+
+            $this->audit->log('draft_deleted', [
+                'page'  => $page,
+                'actor' => $actor,
+                'ip'    => $ip,
+            ]);
+
+            return ['page' => $page, 'deleted' => true];
+        });
+    }
+
+    /**
+     * 下書きのあるページを新しい順に返す。閲覧不可のページは除外する。
+     *
+     * @return array{total: int, drafts: array<array{page: string, updated_at: ?string}>}
+     */
+    public function listDrafts(int $limit = 100, int $offset = 0): array
+    {
+        self::assertDraftAvailable();
+
+        $all = [];
+        foreach (get_draft_list() as $page) {
+            // 検索と同じく、閲覧不可ページは黙って除外する（403 にはしない）
+            if (!$this->canRead($page)) {
+                continue;
+            }
+            $mtime = self::draftMtime($page);
+            $all[] = ['page' => $page, 'updated_at' => $mtime ? date('c', $mtime) : null];
+        }
+        // get_draft_list() は既に更新時刻の降順（lib/draft.php:249-251）
+
+        return [
+            'total'  => count($all),
+            'drafts' => array_slice($all, max(0, $offset), max(1, $limit)),
+        ];
+    }
+
+    // -------------------------------------------------------------------------
+    // identity と書き込み認可
+    // -------------------------------------------------------------------------
+
+    /**
+     * PukiWiki のユーザー identity を差し替えた状態で $fn を実行し、必ず元に戻す。
+     *
+     * 認可判定（is_editable / is_page_writable / _is_page_accessible）と
+     * #author 行の生成が同じ $auth_user を見るため、save/restore は 1 本にまとめる
+     * （入れ子にすると例外パスで復元順が狂う）。
+     *
+     * @template T
+     * @param callable():T $fn
+     * @return T
+     */
+    private function withIdentity(string $actor, string $wiki_user, callable $fn): mixed
+    {
+        $saved = [
+            $GLOBALS['auth_user']          ?? null,
+            $GLOBALS['auth_user_fullname'] ?? null,
+            $GLOBALS['auth_user_groups']   ?? null,
+        ];
+        if ($wiki_user !== '') {
+            // 実在の PukiWiki ユーザーとして振る舞い、$edit_auth を正規に満たす
+            // （バイパスではない。$edit_auth_pages に該当しなければ従来どおり拒否される）
+            $GLOBALS['auth_user'] = $wiki_user;
+            // ラベルを fullname に残し「どのキーで書いたか」の追跡性を保つ
+            $GLOBALS['auth_user_fullname'] = $wiki_user . ' (API: ' . $actor . ')';
+            $GLOBALS['auth_user_groups']   = function_exists('get_groups_from_username')
+                ? get_groups_from_username($wiki_user)
+                : [$wiki_user];
+        } else {
+            // 未ログイン扱い。#author 行にはキーのラベルだけを記録する。
+            // ここで auth_user_groups を空配列にしておくことが重要:
+            //   _is_page_accessible()（lib/auth.php:289-295）は $auth_user が
+            //   非空だと「!$auth_user」の早期 FALSE を通り抜け、そのまま
+            //   array_intersect($auth_user_groups, ...) に進む。null のままだと
+            //   TypeError になり、[] なら交差が空になって FALSE = fail-closed。
+            //   ラベルは実在の PukiWiki ユーザーではないので、これが正しい。
+            $GLOBALS['auth_user']          = $actor;
+            $GLOBALS['auth_user_fullname'] = $actor . ' (API)';
+            $GLOBALS['auth_user_groups']   = [];
+        }
+
+        try {
+            return $fn();
+        } finally {
+            [
+                $GLOBALS['auth_user'],
+                $GLOBALS['auth_user_fullname'],
+                $GLOBALS['auth_user_groups'],
+            ] = $saved;
+        }
+    }
+
+    /**
+     * 書き込み系の認可をまとめて判定する。**必ず withIdentity() の内側で呼ぶこと。**
+     * 拒否は監査ログに残したうえで 403 を投げる。
+     */
+    private function assertWritable(string $page, string $actor, string $ip, string $wiki_user): void
+    {
+        // 閲覧できないページは書き込めない（Web UI の edit と同じ前提）。
+        // $read_auth と $edit_auth は同じ _is_page_accessible() を使うため、
+        // identity を設定した「後」に判定して wiki_user の閲覧権限を正しく反映させる。
+        // ここを飛ばすと、write スコープのキーが「読めないページ」を作成・上書きでき、
+        // さらに書き込み前スナップショットとして旧内容が退避される（閲覧制限の迂回）。
+        $this->assertReadable($page);
+
+        // PukiWiki の凍結・編集可否チェック
+        // （page_write() 自身は PKWK_READONLY しか見ないため、ここで明示的に行う）
+        if (function_exists('is_freeze') && is_freeze($page)) {
+            $this->denied($page, $actor, $ip, 'page_frozen');
+            throw new ApiException(403, "Page '{$page}' is frozen.", 'page_frozen');
+        }
+        if (function_exists('is_editable') && !is_editable($page)) {
+            $this->denied($page, $actor, $ip, 'page_not_editable');
+            throw new ApiException(403, "Page '{$page}' is not editable.", 'page_not_editable');
+        }
+        // $edit_auth による編集認可（Web UI では edit プラグインが is_page_writable() で
+        // 強制する）。キーに wiki_user が無ければログインユーザー不在として
+        // $edit_auth_pages 該当ページは一律拒否 = fail-closed。
+        if (function_exists('is_page_writable') && !is_page_writable($page)) {
+            $this->denied($page, $actor, $ip, 'edit_forbidden');
+            throw new ApiException(
+                403,
+                "Page '{$page}' is protected by edit authentication (\$edit_auth)." .
+                ($wiki_user === ''
+                    ? ' Issue the API key with --wiki-user to write as a PukiWiki user.'
+                    : " The wiki user '{$wiki_user}' is not permitted to edit this page."),
+                'edit_forbidden'
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // 本体経由の保存
     // -------------------------------------------------------------------------
 
@@ -337,70 +660,11 @@ final class PageStore
             }
             $is_new = !$exists;
 
-            // ここから page_write() 完了までを、PukiWiki のユーザー identity を差し替えた
-            // 状態で実行する。認可判定（is_editable / is_page_writable）と #author 行の
-            // 両方が $auth_user を見るため、save/restore は 1 本にまとめる
-            // （入れ子にすると例外パスで復元順が狂う）。
-            $saved_identity = [
-                $GLOBALS['auth_user']          ?? null,
-                $GLOBALS['auth_user_fullname'] ?? null,
-                $GLOBALS['auth_user_groups']   ?? null,
-            ];
-            if ($wiki_user !== '') {
-                // 実在の PukiWiki ユーザーとして振る舞い、$edit_auth を正規に満たす
-                // （バイパスではない。$edit_auth_pages に該当しなければ従来どおり拒否される）
-                $GLOBALS['auth_user'] = $wiki_user;
-                // ラベルを fullname に残し「どのキーで書いたか」の追跡性を保つ
-                $GLOBALS['auth_user_fullname'] = $wiki_user . ' (API: ' . $actor . ')';
-                $GLOBALS['auth_user_groups']   = function_exists('get_groups_from_username')
-                    ? get_groups_from_username($wiki_user)
-                    : [$wiki_user];
-            } else {
-                // 未ログイン扱い。#author 行にはキーのラベルだけを記録する。
-                // ここで auth_user_groups を空配列にしておくことが重要:
-                //   _is_page_accessible()（lib/auth.php:289-295）は $auth_user が
-                //   非空だと「!$auth_user」の早期 FALSE を通り抜け、そのまま
-                //   array_intersect($auth_user_groups, ...) に進む。null のままだと
-                //   TypeError になり、[] なら交差が空になって FALSE = fail-closed。
-                //   ラベルは実在の PukiWiki ユーザーではないので、これが正しい。
-                $GLOBALS['auth_user']          = $actor;
-                $GLOBALS['auth_user_fullname'] = $actor . ' (API)';
-                $GLOBALS['auth_user_groups']   = [];
-            }
-
-            try {
-                // 閲覧できないページは書き込めない（Web UI の edit と同じ前提）。
-                // $read_auth と $edit_auth は同じ _is_page_accessible() を使うため、
-                // identity を設定した「後」に判定して wiki_user の閲覧権限を正しく
-                // 反映させる。ここを飛ばすと、write スコープのキーが「読めないページ」
-                // を作成・上書きでき、さらに書き込み前スナップショットとして旧内容が
-                // data/snapshots/ に退避されてしまう（閲覧制限の迂回）。
-                $this->assertReadable($page);
-
-                // PukiWiki の凍結・編集可否チェック
-                // （page_write() 自身は PKWK_READONLY しか見ないため、ここで明示的に行う）
-                if (function_exists('is_freeze') && is_freeze($page)) {
-                    $this->denied($page, $actor, $ip, 'page_frozen');
-                    throw new ApiException(403, "Page '{$page}' is frozen.", 'page_frozen');
-                }
-                if (function_exists('is_editable') && !is_editable($page)) {
-                    $this->denied($page, $actor, $ip, 'page_not_editable');
-                    throw new ApiException(403, "Page '{$page}' is not editable.", 'page_not_editable');
-                }
-                // $edit_auth による編集認可（Web UI では edit プラグインが is_page_writable() で
-                // 強制する）。キーに wiki_user が無ければログインユーザー不在として
-                // $edit_auth_pages 該当ページは一律拒否 = fail-closed。
-                if (function_exists('is_page_writable') && !is_page_writable($page)) {
-                    $this->denied($page, $actor, $ip, 'edit_forbidden');
-                    throw new ApiException(
-                        403,
-                        "Page '{$page}' is protected by edit authentication (\$edit_auth)." .
-                        ($wiki_user === ''
-                            ? ' Issue the API key with --wiki-user to write as a PukiWiki user.'
-                            : " The wiki user '{$wiki_user}' is not permitted to edit this page."),
-                        'edit_forbidden'
-                    );
-                }
+            // identity を差し替えた状態で認可判定と書き込みを行う（詳細は withIdentity()）
+            $this->withIdentity($actor, $wiki_user, function () use (
+                $page, $new_body, $actor, $ip, $wiki_user, $exists, $old_content, $file
+            ): void {
+                $this->assertWritable($page, $actor, $ip, $wiki_user);
 
                 // 書き込み前スナップショット（既存内容の退避。同一 sha1 は自動スキップ）
                 if ($exists) {
@@ -413,13 +677,7 @@ final class PageStore
                 } else {
                     self::atomicWrite($file, $new_body);
                 }
-            } finally {
-                [
-                    $GLOBALS['auth_user'],
-                    $GLOBALS['auth_user_fullname'],
-                    $GLOBALS['auth_user_groups'],
-                ] = $saved_identity;
-            }
+            });
 
             // 実ファイルを再読込して確定内容を得る
             // （page_write() は本文を変形し、実質無変更なら書き込まない）

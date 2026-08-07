@@ -39,6 +39,11 @@ final class Router
         $this->routes[] = ['method' => 'POST', 'pattern' => $pattern, 'handler' => $handler];
     }
 
+    public function delete(string $pattern, callable $handler): void
+    {
+        $this->routes[] = ['method' => 'DELETE', 'pattern' => $pattern, 'handler' => $handler];
+    }
+
     /**
      * リクエストをディスパッチする。
      * パス不一致は 404、パス一致・メソッド不一致は 405。

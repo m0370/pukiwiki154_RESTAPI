@@ -263,4 +263,15 @@ $actions = array_map(fn($l) => json_decode($l, true)['action'] ?? '', $lines);
 ok(in_array('page_written', $actions, true), 'page_written が記録される');
 ok(in_array('write_denied', $actions, true), 'write_denied（保護ページ拒否）が記録される');
 
+// =========================================================================
+section('下書き: PukiWiki 本体が無い環境では 501');
+// =========================================================================
+// draft は PukiWiki 本体 + サイト独自の lib/draft.php があってはじめて使える。
+// スタンドアロン（本体なし）で呼ばれたら fatal ではなく 501 で明示的に断ること。
+ok(PageStore::draftAvailable() === false, 'スタンドアロンでは draftAvailable() が false');
+expect_api_error(fn() => $REST_PAGES->readDraft('AnyPage'), 501, '下書き取得は 501');
+expect_api_error(fn() => $REST_PAGES->writeDraft('AnyPage', "x\n", 'k'), 501, '下書き保存は 501');
+expect_api_error(fn() => $REST_PAGES->deleteDraft('AnyPage', 'k'), 501, '下書き削除は 501');
+expect_api_error(fn() => $REST_PAGES->listDrafts(), 501, '下書き一覧は 501');
+
 summary();
