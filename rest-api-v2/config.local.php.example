@@ -1,0 +1,22 @@
+<?php
+/**
+ * ローカル設定の例（環境変数が使えないホスティング向け）。
+ *
+ * 標準の設定手段は環境変数（Apache: SetEnv / php-fpm: env[...]）。
+ * 共有ホスティング等でそれが PHP に届かない場合だけ、このファイルを
+ * config.local.php にコピーして使う。
+ *
+ * 優先順位: 環境変数 > config.local.php > 既定値
+ * bootstrap.php（Web）と bin/make-key.php（CLI）の双方が同じ解決を行うため、
+ * keys.php の場所が両者でずれない。
+ *
+ * ⚠ data_dir は必ず DocRoot の外を指すこと。DocRoot 内だと API は
+ *   500 insecure_data_dir で起動を拒否する。
+ */
+return [
+    // 例: DocRoot が /home/example/example.com/public_html の場合
+    'data_dir'  => '/home/example/example.com/rest-data',
+
+    // 省略時は data_dir . '/keys.php'
+    'keys_file' => null,
+];

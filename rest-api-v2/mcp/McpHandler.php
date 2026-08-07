@@ -35,6 +35,8 @@ final class McpHandler
     public function __construct(
         private PageStore $pages,
         private string    $actor = 'mcp-client',
+        /** $edit_auth を有効にしたサイトで名乗る PukiWiki ユーザー名（空なら未ログイン扱い） */
+        private string    $wiki_user = '',
     ) {}
 
     /** JSON-RPC メッセージを処理する。Notification（id なし）は null を返す */
@@ -167,7 +169,7 @@ final class McpHandler
         $content   = self::strArg($args, 'content', required: true);
 
         try {
-            $r = $this->pages->write($page, $content, $base_sha1, $this->actor);
+            $r = $this->pages->write($page, $content, $base_sha1, $this->actor, '', $this->wiki_user);
         } catch (ApiException $e) {
             return "Write failed ({$e->error_code}): {$e->getMessage()}";
         }

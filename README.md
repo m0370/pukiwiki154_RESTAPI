@@ -112,6 +112,10 @@ export PKWK_REST_DATA=/var/lib/pukiwiki-rest/data
 # 編集も可能なキー（自分のスクリプト・信頼するエージェント用）
 php rest-api-v2/bin/make-key.php --label my-editor --scope write
 
+# $edit_auth を有効にしているサイトでは、名乗る PukiWiki ユーザーの指定が必須
+# （指定しないと書き込みが全ページ 403 になる。詳しくは 3.4 節）
+php rest-api-v2/bin/make-key.php --label my-editor --scope write --wiki-user tgoto
+
 # 閲覧・検索のみのキー（AI ボット・検索インデクサ・バックアップ用）
 php rest-api-v2/bin/make-key.php --label ai-reader --scope read
 
@@ -166,6 +170,32 @@ php rest-api-v2/bin/make-key.php --revoke my-editor   # 即時失効
 
 キーは必ず `Authorization: Bearer <キー>` ヘッダで送ります。
 **URL のクエリパラメータに載せてはいけません**（アクセスログ・履歴に残るため）。
+
+### 3.4 `$edit_auth` を有効にしているサイト
+
+`pukiwiki.ini.php` で `$edit_auth = 1` にしている場合、**そのままだと API の
+書き込みが全ページ 403 `edit_forbidden` になります**。API にはログインセッションが
+無く、本体の `is_page_writable()` が未ログインユーザーとして判定するためです。
+
+とくに `$edit_auth_pages` に `'##' => 'someone'` のような**空の正規表現**を使って
+サイト全体を編集ロックしている場合、API は完全に読み取り専用になります。
+
+キーに「どの PukiWiki ユーザーとして書くか」を持たせて解決します:
+
+```bash
+php rest-api-v2/bin/make-key.php --label my-editor --scope write --wiki-user tgoto
+```
+
+書き込みの間だけ `$auth_user` / `$auth_user_groups` をそのユーザーに設定し、
+PukiWiki 本体の `$edit_auth` 判定を**正規に**通します。認可の迂回ではありません:
+
+- そのユーザーが編集できないページは API からも 403 のまま
+- 凍結・保護ページ・`:` システムページの拒否はそのまま効く
+- `#author` 行に wiki ユーザー名とキーのラベルの両方が残り、差分画面から
+  「どのキーが誰として書いたか」を追跡できる
+
+`--wiki-user` を付けないキーは従来どおり fail-closed です（read 専用キーには不要）。
+MCP 方式 A では環境変数 `PKWK_MCP_WIKI_USER` が同じ役割を持ちます。
 
 ## 4. REST API の使い方
 
@@ -369,8 +399,9 @@ write キー（および MCP）でも、以下は常に強制されます:
    凍結が「API 編集不可マーカー」として機能する
 3. **保護ページ** — `FrontPage`・`MenuBar` は 403（環境変数 `PKWK_PROTECTED_PAGES` で変更可）
 4. **システムページ** — `:config` など `:` 始まりは 403
-5. **編集認可（`$edit_auth`）** — `$edit_auth_pages` に該当するページへの書き込みは 403。
-   API にはログインユーザーの概念がないため一律拒否（fail-closed）
+5. **編集認可（`$edit_auth`）** — `$edit_auth_pages` に該当するページへの書き込みは、
+   キーに `wiki_user` が無ければ 403（fail-closed）。`wiki_user` 付きキーは
+   そのユーザーとして本体の判定を受ける（[3.4 節](#34-edit_auth-を有効にしているサイト)）
 6. **空本文の拒否** — 空の content は 400（PukiWiki は空本文をページ削除として扱うため）。
    **削除 API はありません**。削除・凍結・リネームは Web UI で行います
 7. **本文サイズ上限** — 既定 1MB を超える content は 413
@@ -378,9 +409,32 @@ write キー（および MCP）でも、以下は常に強制されます:
 8. **全版スナップショット** — 書き込み前後の版を `data/snapshots/` に保存（削除しない）
 9. **監査ログ** — 全書き込み・拒否を `data/audit/audit-YYYYMM.jsonl` に追記
 10. **#author 記録** — 保存ページの `#author` 行にキーの label / MCP actor が入る
+    （`wiki_user` 付きキーでは wiki ユーザー名とラベルの両方）
+11. **Markdown 互換** — `md.inc.php`（v0.4+）が入っているサイトでは、保存を
+    `md_page_write()` 経由に切り替えて `#md` ページの本文破壊を防ぐ（下記）
 
 読み取り側にも本体の閲覧認可が適用されます（`:` システムページの read 拒否、
 `$read_auth` ページの read/revisions 403 と検索除外。[3.3 節](#33-スコープの考え方)参照）。
+
+### 6.1 Markdown プラグイン（`md.inc.php`）との互換
+
+`page_write()` は保存時に `make_str_rules()` を通します。`#md` ページに対しては、
+これが 2 つの副作用を起こします:
+
+- `*` で始まる行（Markdown の箇条書き・強調）に見出しアンカー `[#xxxxxxxx]` が混入する
+- `&now;` `&date;` `&time;` 等の `$str_rules` マクロが**実際の日時に置換される**
+
+前者は描画側で修復できますが、**後者は不可逆でソースが失われます**:
+
+```
+入力:  現在時刻: &now;
+保存:  現在時刻: 2026-08-07 (金) 07:57:44     ← 元に戻せない
+```
+
+`md.inc.php` v0.4+ は外部ライター向けに `md_page_write()` を提供しており、
+本 API は保存時にこれを自動検出して使います（`#md` ページでのみ `$str_rules` と
+`$fixed_heading_anchor` を一時無効化。非 Markdown ページは `page_write()` へ素通し）。
+`md.inc.php` を入れていないサイトでは従来どおり `page_write()` を呼びます。
 
 ## 7. テスト
 
@@ -392,12 +446,19 @@ php rest-api-v2/test/unit_test.php
 cp -r /var/www/pukiwiki /tmp/pkwk-test
 PKWK_ROOT=/tmp/pkwk-test php rest-api-v2/test/integration_test.php
 
+# サイト統合テスト（改造済みサイトとの噛み合わせ・該当しない項目は自動スキップ）
+PKWK_ROOT=/tmp/pkwk-test php rest-api-v2/test/site_integration_test.php
+
 # Node ブリッジのテスト（モック REST サーバーに対して・25 件）
 cd pukiwiki-mcp && node --test
 ```
 
 統合テストは本物の `page_write()` を通し、v0.1 で発見された問題
-（sha1 乖離・空本文削除・凍結素通し等）の再発を検証します。
+（sha1 乖離・空本文削除・凍結素通し等）の再発を検証します。素の 1.5.4 を前提に
+しているため、`$edit_auth` を有効にしたサイトのコピーに対しては一部 FAIL します。
+
+サイト統合テストはその逆で、**改造済みサイトに載せたときに壊れないか**を検証します
+（`$edit_auth` と `wiki_user`、Markdown ページの本文保全、例外パスでのグローバル復元）。
 
 ## 8. トラブルシューティング
 
@@ -410,11 +471,18 @@ cd pukiwiki-mcp && node --test
 | 500 `insecure_data_dir` | データディレクトリが DocRoot 内。`PKWK_REST_DATA` で外に移す（[2 節](#2-インストール)参照） |
 | 413 が返る | 本文が上限（既定 1MB）超。`PKWK_REST_MAX_BODY_BYTES` で調整 |
 | 403 `read_forbidden` | `$read_auth` の閲覧制限ページ。API キーでは閲覧制限を迂回できない（仕様） |
+| 全ページで 403 `edit_forbidden` | `$edit_auth = 1` のサイト。キーを `--wiki-user <名前>` 付きで作り直す（[3.4 節](#34-edit_auth-を有効にしているサイト)） |
+| `#md` ページの `&now;` 等が実値に化ける | `md.inc.php` が v0.4 未満で `md_page_write()` が無い。プラグインを更新する（[6.1 節](#61-markdown-プラグインmdincphpとの互換)） |
 | 500 エラー | PHP の error_log、`data/` の書き込み権限、`PKWK_ROOT` の指し先 |
 
 環境変数（`PKWK_ROOT` / `PKWK_REST_DATA` / `PKWK_API_KEYS` / `PKWK_PROTECTED_PAGES` /
-`PKWK_MCP_ACTOR` / `PKWK_REST_ALLOW_DOCROOT_DATA` / `PKWK_REST_MAX_BODY_BYTES` /
-`PKWK_REST_MAX_JSON_BYTES`）の詳細は [rest-api-v2/docs/setup.md](rest-api-v2/docs/setup.md) を参照。
+`PKWK_MCP_ACTOR` / `PKWK_MCP_WIKI_USER` / `PKWK_REST_ALLOW_DOCROOT_DATA` /
+`PKWK_REST_MAX_BODY_BYTES` / `PKWK_REST_MAX_JSON_BYTES`）の詳細は
+[rest-api-v2/docs/setup.md](rest-api-v2/docs/setup.md) を参照。
+
+環境変数が PHP に届かない共有ホスティングでは、`rest-api-v2/config.local.php`
+（`config.local.php.example` をコピー）でデータディレクトリを指定できます。
+優先順位は 環境変数 > `config.local.php` > 既定値。
 
 ## 9. ディレクトリ構成
 
@@ -422,10 +490,12 @@ cd pukiwiki-mcp && node --test
 rest-api-v2/
 ├── bootstrap.php        PukiWiki 本体の正規初期化を再現してロード
 ├── api/v1/index.php     REST フロントコントローラ
-├── lib/                 Auth / PageStore / SnapshotStore / Audit / Router / Response
+├── lib/                 Auth / PageStore / SnapshotStore / Audit / Router / Response / LocalConfig
 ├── mcp/server.php       MCP stdio サーバー・方式 A（同一マシン・PHP 直結）
 ├── bin/make-key.php     API キー管理 CLI
 ├── data/                キー・スナップショット・監査ログ（Web 非公開）
+├── config.local.php.example  環境変数が使えないホスティング向けの設定例
+├── .user.ini            display_errors=Off（PHP 警告が JSON に混入するのを防ぐ）
 ├── docs/                setup.md / api-reference.md
 └── test/                ユニット＋統合テスト
 

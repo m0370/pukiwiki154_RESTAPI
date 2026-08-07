@@ -16,8 +16,14 @@ require_once __DIR__ . '/ApiException.php';
  *           'scope'      => 'write',       // 'read' | 'write'（write は read を包含）
  *           'expires_at' => null,          // UNIX time または null（無期限）
  *           'ip_allow'   => null,          // '203.0.113.5' / '198.51.100.0/24' / null
+ *           'wiki_user'  => null,          // このキーが名乗る PukiWiki ユーザー名（$auth_users のキー）
  *       ],
  *   ];
+ *
+ * wiki_user を指定すると、書き込み時だけ $auth_user をそのユーザーに差し替えて
+ * PukiWiki 本体の $edit_auth 判定を通す。$edit_auth を有効にしているサイトでは
+ * これを指定しないと全ページが 403 edit_forbidden になる（fail-closed）。
+ * 認可を迂回するのではなく、本体の認可をそのユーザーとして正規に評価させる。
  *
  * 生キーは bin/make-key.php で生成し、一度だけ表示される。平文は保存しない。
  * キーは必ず Authorization: Bearer ヘッダで送る（クエリパラメータ禁止）。
@@ -38,7 +44,7 @@ final class Auth
      * @param string $authorization  "Bearer xxxx" 形式のヘッダ値
      * @param string $required_scope self::SCOPE_READ | self::SCOPE_WRITE
      * @param string $client_ip      クライアント IP（ip_allow 照合用）
-     * @return array{label: string, scope: string}
+     * @return array{label: string, scope: string, wiki_user: string}
      * @throws ApiException 401/403
      */
     public function authenticate(
@@ -82,8 +88,9 @@ final class Auth
         }
 
         return [
-            'label' => (string)($matched['label'] ?? 'api'),
-            'scope' => $scope,
+            'label'     => (string)($matched['label'] ?? 'api'),
+            'scope'     => $scope,
+            'wiki_user' => (string)($matched['wiki_user'] ?? ''),
         ];
     }
 
