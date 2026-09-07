@@ -35,15 +35,25 @@ v0.1（`rest-api/`、SQLite＋下書き承認方式）は参考実装として�
 # 1. 配置
 cp -r rest-api-v2 /var/www/pukiwiki/
 
-# 2. 書き込み権限（Web サーバーのユーザーに合わせる）
-chown -R www-data:www-data /var/www/pukiwiki/rest-api-v2/data
-chmod 750 /var/www/pukiwiki/rest-api-v2/data
+# 2. データディレクトリを DocRoot の「外」に作る（標準・推奨）
+#    キー・監査ログ・スナップショット（編集したページの全文）が入る。
+#    DocRoot 内に置くと API は既定で 500 insecure_data_dir を返して起動を拒否する。
+mkdir -p /var/lib/pukiwiki-rest/data
+chown -R www-data:www-data /var/lib/pukiwiki-rest/data
+chmod 750 /var/lib/pukiwiki-rest/data
+rm -rf /var/www/pukiwiki/rest-api-v2/data   # 同梱の空 data/ は使わない
 
-# 3. API キーを発行（生キーは一度だけ表示される）
+# 3. その場所を指す（環境変数が届かないホスティングでは config.local.php）
+#    Apache: SetEnv PKWK_REST_DATA /var/lib/pukiwiki-rest/data
+#    php-fpm: env[PKWK_REST_DATA] = /var/lib/pukiwiki-rest/data
+export PKWK_REST_DATA=/var/lib/pukiwiki-rest/data
+
+# 4. API キーを発行（生キーは一度だけ表示される）
+#    $read_auth / $edit_auth を使うサイトでは --wiki-user を付ける（後述）
 php /var/www/pukiwiki/rest-api-v2/bin/make-key.php --label my-editor --scope write
 php /var/www/pukiwiki/rest-api-v2/bin/make-key.php --label ai-reader --scope read
 
-# 4. 疎通確認（401 が返れば認証が効いている）
+# 5. 疎通確認（401 が返れば認証が効いている）
 curl -i https://example.com/rest-api-v2/api/v1/pages/FrontPage
 # → 401 Unauthorized
 
