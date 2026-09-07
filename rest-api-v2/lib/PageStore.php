@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/ApiException.php';
+require_once __DIR__ . '/Identity.php';
 require_once __DIR__ . '/SnapshotStore.php';
 require_once __DIR__ . '/Audit.php';
 
@@ -48,27 +49,93 @@ final class PageStore
         private Audit         $audit,
     ) {}
 
-    /** このリクエストの identity（API キー由来）。read 系にも適用する。 */
-    private string $id_actor     = '';
-    private string $id_wiki_user = '';
-    /** withIdentity() の再入ガード（write() の内側の assertReadable() で二重適用しない） */
-    private bool   $in_identity  = false;
+    /**
+     * このリクエストの identity。null は「まだ認証していない」= 未ログイン扱い。
+     * 生成後は差し替えない（withIdentity() が clone を返す）ため、read と write が
+     * 同じ 1 つの identity を見る。
+     */
+    private ?Identity $identity = null;
 
     /**
-     * このリクエストの identity を設定する。認証直後に 1 回だけ呼ぶ。
-     * read 系（read / listPages / search / assertReadable）はこの identity で
-     * $read_auth を評価する。設定しなければ従来どおり未ログイン扱い = fail-closed。
+     * 指定の identity を持つ PageStore を返す（自身は変更しない）。
+     * 認証が済んだ直後に 1 回呼び、以降はその戻り値を使う。
      */
-    public function setIdentity(string $actor, string $wiki_user): void
+    public function withIdentity(Identity $identity): static
     {
-        $this->id_actor     = $actor;
-        $this->id_wiki_user = $wiki_user;
+        $clone = clone $this;
+        $clone->identity = $identity;
+        return $clone;
     }
 
-    /** 設定済み identity で $fn を実行する（read 系用のショートハンド） */
-    private function asIdentity(callable $fn): mixed
+    /** 現在の identity（未設定なら匿名）。 */
+    private function identity(): Identity
     {
-        return $this->withIdentity($this->id_actor, $this->id_wiki_user, $fn);
+        return $this->identity ?? Identity::anonymous();
+    }
+
+    /**
+     * identity を PukiWiki のグローバルに反映した状態で $fn を実行し、必ず元に戻す。
+     *
+     * 認可判定（is_editable / is_page_writable / _is_page_accessible）と #author 行の
+     * 生成が同じ $auth_user を見るため、差し替えと復元は 1 本にまとめる。
+     * **公開メソッドの入口でだけ呼ぶこと。** 内部からは *Inner() 系を呼び、
+     * 入れ子にしない（入れ子でも復元自体は成立するが、内側が外側の identity を
+     * 上書きしないという保証を型で持てないため）。
+     *
+     * @template T
+     * @param callable():T $fn
+     * @return T
+     */
+    private function applying(callable $fn): mixed
+    {
+        $id = $this->identity();
+        // 未定義と null を区別して保存する（復元時に元の状態を正確に戻すため）
+        $had  = [
+            array_key_exists('auth_user', $GLOBALS),
+            array_key_exists('auth_user_fullname', $GLOBALS),
+            array_key_exists('auth_user_groups', $GLOBALS),
+        ];
+        $saved = [
+            $GLOBALS['auth_user']          ?? null,
+            $GLOBALS['auth_user_fullname'] ?? null,
+            $GLOBALS['auth_user_groups']   ?? null,
+        ];
+
+        // 差し替えは try の内側で行う。get_groups_from_username() が投げた場合でも
+        // 「ユーザー名だけ新しく、グループは元のまま」という中途半端な状態を残さない。
+        try {
+            if (!$id->isAnonymous()) {
+                // 実在の PukiWiki ユーザーとして振る舞い、$read_auth / $edit_auth を
+                // 正規に満たす（バイパスではない。該当しなければ従来どおり拒否される）
+                $GLOBALS['auth_user']          = $id->wiki_user;
+                // ラベルを fullname に残し「どのキーで触ったか」の追跡性を保つ
+                $GLOBALS['auth_user_fullname'] = $id->actor !== ''
+                    ? $id->wiki_user . ' (API: ' . $id->actor . ')'
+                    : $id->wiki_user;
+                $GLOBALS['auth_user_groups']   = function_exists('get_groups_from_username')
+                    ? get_groups_from_username($id->wiki_user)
+                    : [$id->wiki_user];
+            } else {
+                // 未ログイン扱い。#author 行には actor だけを記録する。
+                //   _is_page_accessible()（lib/auth.php:289-295）は $auth_user が
+                //   非空だと「!$auth_user」の早期 FALSE を通り抜け、そのまま
+                //   array_intersect($auth_user_groups, ...) に進む。null のままだと
+                //   TypeError になり、[] なら交差が空になって FALSE = fail-closed。
+                $GLOBALS['auth_user']          = $id->actor;
+                $GLOBALS['auth_user_fullname'] = $id->actor !== '' ? $id->actor . ' (API)' : '';
+                $GLOBALS['auth_user_groups']   = [];
+            }
+
+            return $fn();
+        } finally {
+            foreach (['auth_user', 'auth_user_fullname', 'auth_user_groups'] as $i => $k) {
+                if ($had[$i]) {
+                    $GLOBALS[$k] = $saved[$i];
+                } else {
+                    unset($GLOBALS[$k]);
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -84,9 +151,9 @@ final class PageStore
      */
     public function read(string $page): array
     {
-        return $this->asIdentity(function () use ($page) {
+        return $this->applying(function () use ($page) {
         $this->validatePageName($page);
-        $this->assertReadable($page);
+        $this->assertReadableInner($page);
         $file = $this->filePath($page);
         if (!is_file($file)) {
             throw new ApiException(404, "Page '{$page}' not found", 'page_not_found');
@@ -116,7 +183,7 @@ final class PageStore
      */
     public function listPages(int $limit = 100, int $offset = 0): array
     {
-        return $this->asIdentity(function () use ($limit, $offset) {
+        return $this->applying(function () use ($limit, $offset) {
         $all = [];
         foreach ($this->scanPages() as $page => $file) {
             // PHP は "2022" のような数値文字列キーを int に変換する。
@@ -147,7 +214,7 @@ final class PageStore
      */
     public function search(string $query, int $limit = 20): array
     {
-        return $this->asIdentity(function () use ($query, $limit) {
+        return $this->applying(function () use ($query, $limit) {
         $results = [];
         foreach ($this->scanPages() as $page => $file) {
             $page = (string)$page; // 数値ページ名が int キーになる（listPages と同じ理由）
@@ -193,73 +260,20 @@ final class PageStore
     // -------------------------------------------------------------------------
 
     /**
-     * PukiWiki のユーザー identity を差し替えた状態で $fn を実行し、必ず元に戻す。
-     *
-     * 認可判定（is_editable / is_page_writable / _is_page_accessible）と
-     * #author 行の生成が同じ $auth_user を見るため、save/restore は 1 本にまとめる
-     * （入れ子にすると例外パスで復元順が狂う）。
-     *
-     * @template T
-     * @param callable():T $fn
-     * @return T
-     */
-    private function withIdentity(string $actor, string $wiki_user, callable $fn): mixed
-    {
-        if ($this->in_identity) {
-            return $fn(); // 既に identity 適用中（write() → assertWritable() → assertReadable()）
-        }
-        $saved = [
-            $GLOBALS['auth_user']          ?? null,
-            $GLOBALS['auth_user_fullname'] ?? null,
-            $GLOBALS['auth_user_groups']   ?? null,
-        ];
-        if ($wiki_user !== '') {
-            // 実在の PukiWiki ユーザーとして振る舞い、$edit_auth を正規に満たす
-            // （バイパスではない。$edit_auth_pages に該当しなければ従来どおり拒否される）
-            $GLOBALS['auth_user'] = $wiki_user;
-            // ラベルを fullname に残し「どのキーで書いたか」の追跡性を保つ
-            $GLOBALS['auth_user_fullname'] = $wiki_user . ' (API: ' . $actor . ')';
-            $GLOBALS['auth_user_groups']   = function_exists('get_groups_from_username')
-                ? get_groups_from_username($wiki_user)
-                : [$wiki_user];
-        } else {
-            // 未ログイン扱い。#author 行にはキーのラベルだけを記録する。
-            // ここで auth_user_groups を空配列にしておくことが重要:
-            //   _is_page_accessible()（lib/auth.php:289-295）は $auth_user が
-            //   非空だと「!$auth_user」の早期 FALSE を通り抜け、そのまま
-            //   array_intersect($auth_user_groups, ...) に進む。null のままだと
-            //   TypeError になり、[] なら交差が空になって FALSE = fail-closed。
-            //   ラベルは実在の PukiWiki ユーザーではないので、これが正しい。
-            $GLOBALS['auth_user']          = $actor;
-            $GLOBALS['auth_user_fullname'] = $actor . ' (API)';
-            $GLOBALS['auth_user_groups']   = [];
-        }
-
-        $this->in_identity = true;
-        try {
-            return $fn();
-        } finally {
-            $this->in_identity = false;
-            [
-                $GLOBALS['auth_user'],
-                $GLOBALS['auth_user_fullname'],
-                $GLOBALS['auth_user_groups'],
-            ] = $saved;
-        }
-    }
-
-    /**
-     * 書き込み系の認可をまとめて判定する。**必ず withIdentity() の内側で呼ぶこと。**
+     * 書き込み系の認可をまとめて判定する。**必ず applying() の内側で呼ぶこと。**
      * 拒否は監査ログに残したうえで 403 を投げる。
      */
-    private function assertWritable(string $page, string $actor, string $ip, string $wiki_user): void
+    private function assertWritable(string $page, string $ip): void
     {
+        $actor     = $this->identity()->actor;
+        $wiki_user = $this->identity()->wiki_user;
+
         // 閲覧できないページは書き込めない（Web UI の edit と同じ前提）。
         // $read_auth と $edit_auth は同じ _is_page_accessible() を使うため、
-        // identity を設定した「後」に判定して wiki_user の閲覧権限を正しく反映させる。
+        // applying() の内側で判定して wiki_user の閲覧権限を正しく反映させる。
         // ここを飛ばすと、write スコープのキーが「読めないページ」を作成・上書きでき、
         // さらに書き込み前スナップショットとして旧内容が退避される（閲覧制限の迂回）。
-        $this->assertReadable($page);
+        $this->assertReadableInner($page);
 
         // PukiWiki の凍結・編集可否チェック
         // （page_write() 自身は PKWK_READONLY しか見ないため、ここで明示的に行う）
@@ -328,7 +342,12 @@ final class PageStore
     /** 閲覧不可なら 403 を投げる（read・revisions 用。検索のフィルタには canRead() を使う） */
     public function assertReadable(string $page): void
     {
-        $this->asIdentity(function () use ($page) {
+        $this->applying(fn() => $this->assertReadableInner($page));
+    }
+
+    /** assertReadable() の実体。**applying() の内側からのみ呼ぶこと。** */
+    private function assertReadableInner(string $page): void
+    {
         if ($this->canRead($page)) {
             return;
         }
@@ -344,7 +363,6 @@ final class PageStore
             "Page '{$page}' is not readable (protected by read authentication).",
             'read_forbidden'
         );
-        });
     }
 
     /**
@@ -392,10 +410,23 @@ final class PageStore
         string $page,
         string $new_body,
         string $base_sha1,
-        string $actor,
+        // identity 済みインスタンスでは無視される（identity が唯一の情報源）。
+        // CLI・テストからの直呼び用に残してある互換引数。
+        string $actor = '',
         string $ip = '',
         string $wiki_user = ''
     ): array {
+        // identity 未設定のインスタンス（CLI・テスト・MCP の直呼び）では、引数から
+        // 1 度だけ identity を組み立てて自分自身に委譲する。HTTP 経路は認証直後に
+        // withIdentity() 済みなのでここは通らず、$actor / $wiki_user は無視される
+        // （identity が唯一の情報源。read と write で二重管理しない）。
+        if ($this->identity === null) {
+            return $this->withIdentity(new Identity($actor, $wiki_user))
+                        ->write($page, $new_body, $base_sha1, $actor, $ip, $wiki_user);
+        }
+        $actor     = $this->identity->actor;
+        $wiki_user = $this->identity->wiki_user;
+
         $this->validatePageName($page);
 
         if (!preg_match('/^[0-9a-f]{40}$/i', $base_sha1)) {
@@ -454,33 +485,38 @@ final class PageStore
         $lock = $this->acquireLock($page);
 
         try {
-            // CAS: ロック内で現在の内容を確定させてから照合する
-            clearstatcache(true, $file);
-            $exists      = is_file($file);
-            $old_content = $exists ? (string)file_get_contents($file) : '';
-            $old_sha1    = $exists ? sha1($old_content) : self::EMPTY_SHA1;
+            // identity を反映した状態で「認可 → CAS → 書き込み」を通す。
+            //
+            // ⚠ 認可は CAS より**前**に行うこと。逆にすると、閲覧できないページに対して
+            // 409 が現在の sha1 を含んで返るため、write キーだけでページの存在と本文の
+            // ハッシュを引き出せてしまう（認可前の情報漏えい）。
+            // 認可・CAS・書き込みは 1 つの applying() の内側で完結させる。
+            // 後段（changed 判定・監査ログ）で要る値はここから受け取る。
+            [$is_new, $old_sha1] = $this->applying(function () use (
+                $page, $new_body, $base_sha1, $ip, $file
+            ): array {
+                $this->assertWritable($page, $ip);
 
-            if ($exists) {
-                if ($old_sha1 !== $base_sha1) {
+                // CAS: ロック内で現在の内容を確定させてから照合する
+                clearstatcache(true, $file);
+                $exists      = is_file($file);
+                $old_content = $exists ? (string)file_get_contents($file) : '';
+                $old_sha1    = $exists ? sha1($old_content) : self::EMPTY_SHA1;
+
+                if ($exists) {
+                    if ($old_sha1 !== $base_sha1) {
+                        throw new ApiException(409, implode(' ', [
+                            "Conflict: page '{$page}' has been modified since your base.",
+                            "Expected sha1={$base_sha1}, current sha1={$old_sha1}.",
+                            'Re-read the page and apply your changes to the current version.',
+                        ]), 'sha1_conflict');
+                    }
+                } elseif ($base_sha1 !== self::EMPTY_SHA1) {
                     throw new ApiException(409, implode(' ', [
-                        "Conflict: page '{$page}' has been modified since your base.",
-                        "Expected sha1={$base_sha1}, current sha1={$old_sha1}.",
-                        'Re-read the page and apply your changes to the current version.',
-                    ]), 'sha1_conflict');
+                        "Page '{$page}' does not exist.",
+                        'For new pages use base_sha1=' . self::EMPTY_SHA1 . ' (sha1 of empty string).',
+                    ]), 'page_not_found_as_conflict');
                 }
-            } elseif ($base_sha1 !== self::EMPTY_SHA1) {
-                throw new ApiException(409, implode(' ', [
-                    "Page '{$page}' does not exist.",
-                    'For new pages use base_sha1=' . self::EMPTY_SHA1 . ' (sha1 of empty string).',
-                ]), 'page_not_found_as_conflict');
-            }
-            $is_new = !$exists;
-
-            // identity を差し替えた状態で認可判定と書き込みを行う（詳細は withIdentity()）
-            $this->withIdentity($actor, $wiki_user, function () use (
-                $page, $new_body, $actor, $ip, $wiki_user, $exists, $old_content, $file
-            ): void {
-                $this->assertWritable($page, $actor, $ip, $wiki_user);
 
                 // 書き込み前スナップショット（既存内容の退避。同一 sha1 は自動スキップ）
                 if ($exists) {
@@ -493,6 +529,7 @@ final class PageStore
                 } else {
                     self::atomicWrite($file, $new_body);
                 }
+                return [!$exists, $old_sha1];
             });
 
             // 実ファイルを再読込して確定内容を得る

@@ -232,6 +232,15 @@ php rest-api-v2/bin/make-key.php --label my-editor --scope write --wiki-user tgo
 同じ identity で `$read_auth` を評価するため、`$read_auth` を使うサイトでは read キーにも
 指定してください（`$read_auth = 0` のサイトでは read キーに不要）。
 
+> ⚠ **`wiki_user` の実在は検証していません。** PukiWiki 本体の
+> `get_groups_from_username()`（`lib/auth.php`）はユーザー名自身を暗黙のグループとして
+> 返すため、`$auth_users` から削除済みのユーザー名でも認可を通ります。つまり
+> **Wiki 側のアカウントを消しても、そのユーザーを名乗る API キーは失効しません。**
+> パスワード変更・アカウント削除と API キーの失効は別の操作です。キーの停止は必ず
+> `make-key.php --revoke <ラベル>` で行ってください。
+> （キー発行時に `$auth_users` との突き合わせを行う改善は検討中。外部認証
+> （LDAP / SAML）への委任と、ローカルユーザーの検証を区別する必要があるため未実装です。）
+
 MCP 方式 A（PHP 直結）では環境変数 `PKWK_MCP_WIKI_USER` が同じ役割を持ちます。
 
 ## テスト

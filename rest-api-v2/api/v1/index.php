@@ -104,11 +104,11 @@ $router = new Router();
 $router->get('/pages', function () use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
     $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
-    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
+    $pages = $REST_PAGES->withIdentity(new Identity($key['label'], $key['wiki_user'] ?? ''));
 
     $limit  = rest_query_int('limit', 100, 1, 1000);
     $offset = rest_query_int('offset', 0, 0, PHP_INT_MAX);
-    $result = $REST_PAGES->listPages($limit, $offset);
+    $result = $pages->listPages($limit, $offset);
 
     return Response::ok([
         'pages'  => $result['pages'],
@@ -123,7 +123,7 @@ $router->get('/pages', function () use ($auth): Response {
 $router->get('/search', function () use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
     $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
-    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
+    $pages = $REST_PAGES->withIdentity(new Identity($key['label'], $key['wiki_user'] ?? ''));
 
     $q = trim(rest_query('q'));
     if ($q === '') {
@@ -133,7 +133,7 @@ $router->get('/search', function () use ($auth): Response {
         throw new ApiException(400, 'Query must be at least 2 characters', 'query_too_short');
     }
     $limit   = rest_query_int('limit', 20, 1, 100);
-    $results = $REST_PAGES->search($q, $limit);
+    $results = $pages->search($q, $limit);
 
     return Response::ok([
         'query'   => $q,
@@ -146,8 +146,8 @@ $router->get('/search', function () use ($auth): Response {
 $router->get('/pages/{page...}/revisions', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_SNAPSHOTS, $REST_PAGES;
     $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
-    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
-    $REST_PAGES->assertReadable($vars['page']);
+    $pages = $REST_PAGES->withIdentity(new Identity($key['label'], $key['wiki_user'] ?? ''));
+    $pages->assertReadable($vars['page']);
 
     $revs = $REST_SNAPSHOTS->list($vars['page']);
     return Response::ok([
@@ -163,8 +163,8 @@ $router->get('/pages/{page...}/revisions', function (array $vars) use ($auth): R
 $router->get('/pages/{page...}/revisions/{rev}', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_SNAPSHOTS, $REST_PAGES;
     $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
-    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
-    $REST_PAGES->assertReadable($vars['page']);
+    $pages = $REST_PAGES->withIdentity(new Identity($key['label'], $key['wiki_user'] ?? ''));
+    $pages->assertReadable($vars['page']);
 
     $content = $REST_SNAPSHOTS->read($vars['page'], $vars['rev']);
     return Response::ok([
@@ -180,15 +180,15 @@ $router->get('/pages/{page...}/revisions/{rev}', function (array $vars) use ($au
 $router->get('/pages/{page...}', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
     $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
-    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
-    return Response::ok($REST_PAGES->read($vars['page']));
+    $pages = $REST_PAGES->withIdentity(new Identity($key['label'], $key['wiki_user'] ?? ''));
+    return Response::ok($pages->read($vars['page']));
 });
 
 // PUT /pages/{page} — 全文書き込み（新規 201 / 更新 200）
 $router->put('/pages/{page...}', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
     $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_WRITE, $REST_REQUEST['remote_addr']);
-    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
+    $pages = $REST_PAGES->withIdentity(new Identity($key['label'], $key['wiki_user'] ?? ''));
 
     $body      = rest_json_body();
     $base_sha1 = is_string($body['base_sha1'] ?? null) ? trim($body['base_sha1']) : '';
@@ -205,7 +205,7 @@ $router->put('/pages/{page...}', function (array $vars) use ($auth): Response {
         throw new ApiException(400, '"content" (non-empty string) is required', 'missing_content');
     }
 
-    $result = $REST_PAGES->write(
+    $result = $pages->write(
         $vars['page'],
         $content,
         $base_sha1,

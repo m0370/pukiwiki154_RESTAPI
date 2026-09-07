@@ -276,17 +276,57 @@ try {
 section('8. 読み取りはサイト設定でも通る');
 
 // 一覧は PukiWiki 本体（lib/html.php: is_page_readable）と同じく $read_auth で
-// フィルタされる。$read_auth が全ページに掛かるサイトでは identity 必須。
-if ($read_auth_on && $wiki_user !== '') {
-    $REST_PAGES->setIdentity('list-key', $wiki_user);
-}
-$listed = $REST_PAGES->listPages(5, 0);
+// フィルタされる。$read_auth が掛かるサイトでは identity 必須。
+$as_user = $REST_PAGES->withIdentity(new Identity('list-key', $wiki_user));
+$listed  = $as_user->listPages(5, 0);
 ok(!empty($listed['pages']), 'ページ一覧を取得できる（identity 反映）');
 
-if ($read_auth_on) {
-    $REST_PAGES->setIdentity('anon-key', '');
-    $anon = $REST_PAGES->listPages(5, 0);
-    ok(empty($anon['pages']), 'wiki_user 無しの一覧は空（ページ名を漏らさない）');
+// 匿名の一覧に閲覧制限ページが出ないこと。
+// ⚠ 「一覧が空」で検査してはいけない: 一部のページだけ制限しているサイトでは
+//    公開ページが残るため成立しない。制限ページの不在で判定する。
+if ($read_auth_on && is_file($REST_PAGES->filePath($secret))) {
+    $anon  = $REST_PAGES->withIdentity(Identity::anonymous())->listPages(100000, 0);
+    $names = array_column($anon['pages'], 'name');
+    ok(!in_array($secret, $names, true), '閲覧制限ページは匿名の一覧に出ない');
+}
+
+// フィルタしてから array_slice するため、total と offset が同じ集合を指すこと。
+$all  = $as_user->listPages(100000, 0);
+$tot  = $all['total'];
+ok($tot === count($all['pages']), "total と取得件数が一致する（total={$tot}）");
+$past = $as_user->listPages(5, $tot);
+ok($past['pages'] === [] && $past['total'] === $tot,
+   'total を超える offset は空を返し、total は変わらない');
+if ($tot > 1) {
+    $p2 = $as_user->listPages(1, 1);
+    ok(($p2['pages'][0]['name'] ?? null) === ($all['pages'][1]['name'] ?? null),
+       'offset がフィルタ後の集合の位置を指す');
+}
+
+// 数値だけのページ名（"2020" 等）が int キーに落ちて型エラーにならないこと
+foreach ($all['pages'] as $row) {
+    if (!is_string($row['name'])) {
+        ok(false, 'ページ名が文字列でない: ' . var_export($row['name'], true));
+        break;
+    }
+}
+ok(true, 'ページ名はすべて文字列（数値ページ名の int キー化を防げている）');
+
+// =========================================================================
+section('9. 認可前に CAS の情報を漏らさない');
+
+// 閲覧できないページへ write を試みたとき、409 で現在の sha1 を返してはいけない。
+// 返すと write キーだけでページの存在と本文ハッシュを引き出せる（認可前の情報漏えい）。
+if ($read_auth_on && is_file($REST_PAGES->filePath($secret))) {
+    try {
+        $REST_PAGES->withIdentity(Identity::anonymous())
+                   ->write($secret, "上書き\n", str_repeat('0', 40));
+        ok(false, '閲覧できないページへの書き込みが通ってしまった');
+    } catch (ApiException $e) {
+        ok($e->status === 403, "認可エラーが CAS より先に返る（status={$e->status}）");
+        ok(!preg_match('/current sha1=[0-9a-f]{40}/', $e->getMessage()),
+           'エラーメッセージに現在の sha1 が含まれない');
+    }
 }
 
 summary();
