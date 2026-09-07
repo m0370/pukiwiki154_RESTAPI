@@ -64,6 +64,7 @@ clearstatcache();
 
 /** このサイトで $edit_auth が全ページに掛かっているか */
 $edit_auth_on = !empty($GLOBALS['edit_auth']) && function_exists('is_page_writable');
+$read_auth_on = !empty($GLOBALS['read_auth']) && function_exists('_is_page_accessible');
 /** $auth_users の先頭ユーザー（wiki_user として使う） */
 $wiki_user = '';
 foreach (($GLOBALS['auth_users'] ?? []) as $name => $_) {
@@ -274,7 +275,18 @@ try {
 // =========================================================================
 section('8. 読み取りはサイト設定でも通る');
 
+// 一覧は PukiWiki 本体（lib/html.php: is_page_readable）と同じく $read_auth で
+// フィルタされる。$read_auth が全ページに掛かるサイトでは identity 必須。
+if ($read_auth_on && $wiki_user !== '') {
+    $REST_PAGES->setIdentity('list-key', $wiki_user);
+}
 $listed = $REST_PAGES->listPages(5, 0);
-ok(!empty($listed['pages']), 'ページ一覧を取得できる');
+ok(!empty($listed['pages']), 'ページ一覧を取得できる（identity 反映）');
+
+if ($read_auth_on) {
+    $REST_PAGES->setIdentity('anon-key', '');
+    $anon = $REST_PAGES->listPages(5, 0);
+    ok(empty($anon['pages']), 'wiki_user 無しの一覧は空（ページ名を漏らさない）');
+}
 
 summary();

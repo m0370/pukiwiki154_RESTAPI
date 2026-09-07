@@ -40,6 +40,7 @@ require_once __DIR__ . '/McpHandler.php';
 $actor     = (string)(getenv('PKWK_MCP_ACTOR') ?: 'mcp-client');
 // $edit_auth を有効にしたサイトでは、名乗る PukiWiki ユーザー名の指定が必須
 $wiki_user = (string)(getenv('PKWK_MCP_WIKI_USER') ?: '');
+$REST_PAGES->setIdentity($actor, $wiki_user);
 $handler   = new McpHandler($REST_PAGES, $actor, $wiki_user);
 
 fwrite(STDERR, "[pukiwiki-mcp] v2 server ready (actor={$actor}"

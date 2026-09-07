@@ -122,7 +122,15 @@ php bin/make-key.php --revoke <名前>
 **削除 API はありません。** ページの削除・凍結・リネームは PukiWiki の Web UI で行います。
 
 `read` スコープにも PukiWiki 本体の閲覧制限が適用されます: `:` 始まりのシステムページは
-取得・スナップショットとも 403、`$read_auth` の閲覧制限ページは 403 かつ検索結果から除外。
+取得・スナップショットとも 403、`$read_auth` の閲覧制限ページは 403 かつ検索結果・
+ページ一覧から除外（本体 `lib/html.php` の `is_page_readable()` と同じ扱い）。
+
+`$read_auth` を**全ページ**に掛けているサイトでは、read キーにも `--wiki-user` が要ります。
+付けないキーは fail-closed のまま、取得が全ページ 403・一覧と検索が空になります:
+
+```bash
+php rest-api-v2/bin/make-key.php --label ai-reader --scope read --wiki-user tgoto
+```
 
 ## 書き込みの安全装置
 
@@ -220,7 +228,9 @@ php rest-api-v2/bin/make-key.php --label my-editor --scope write --wiki-user tgo
 - `#author` 行には wiki ユーザー名とキーのラベルの両方が残るため、
   「どのキーが誰として書いたか」を差分画面から追跡できる
 
-`--wiki-user` を付けないキーは従来どおり fail-closed です（read 専用キーには不要）。
+`--wiki-user` を付けないキーは従来どおり fail-closed です。read 系（取得・一覧・検索）も
+同じ identity で `$read_auth` を評価するため、`$read_auth` を使うサイトでは read キーにも
+指定してください（`$read_auth = 0` のサイトでは read キーに不要）。
 
 MCP 方式 A（PHP 直結）では環境変数 `PKWK_MCP_WIKI_USER` が同じ役割を持ちます。
 

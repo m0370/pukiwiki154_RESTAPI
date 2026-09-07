@@ -103,7 +103,8 @@ $router = new Router();
 // GET /pages — ページ一覧
 $router->get('/pages', function () use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
-    $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
 
     $limit  = rest_query_int('limit', 100, 1, 1000);
     $offset = rest_query_int('offset', 0, 0, PHP_INT_MAX);
@@ -121,7 +122,8 @@ $router->get('/pages', function () use ($auth): Response {
 // GET /search?q=...&limit=N — 全文検索
 $router->get('/search', function () use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
-    $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
 
     $q = trim(rest_query('q'));
     if ($q === '') {
@@ -143,7 +145,8 @@ $router->get('/search', function () use ($auth): Response {
 // GET /pages/{page}/revisions — API書き込みスナップショットの一覧
 $router->get('/pages/{page...}/revisions', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_SNAPSHOTS, $REST_PAGES;
-    $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
     $REST_PAGES->assertReadable($vars['page']);
 
     $revs = $REST_SNAPSHOTS->list($vars['page']);
@@ -159,7 +162,8 @@ $router->get('/pages/{page...}/revisions', function (array $vars) use ($auth): R
 // GET /pages/{page}/revisions/{rev} — 過去版の本文取得
 $router->get('/pages/{page...}/revisions/{rev}', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_SNAPSHOTS, $REST_PAGES;
-    $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
     $REST_PAGES->assertReadable($vars['page']);
 
     $content = $REST_SNAPSHOTS->read($vars['page'], $vars['rev']);
@@ -175,7 +179,8 @@ $router->get('/pages/{page...}/revisions/{rev}', function (array $vars) use ($au
 // GET /pages/{page} — ページ取得
 $router->get('/pages/{page...}', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
-    $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_READ, $REST_REQUEST['remote_addr']);
+    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
     return Response::ok($REST_PAGES->read($vars['page']));
 });
 
@@ -183,6 +188,7 @@ $router->get('/pages/{page...}', function (array $vars) use ($auth): Response {
 $router->put('/pages/{page...}', function (array $vars) use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
     $key = $auth->authenticate($REST_REQUEST['authorization'], Auth::SCOPE_WRITE, $REST_REQUEST['remote_addr']);
+    $REST_PAGES->setIdentity($key['label'], $key['wiki_user'] ?? '');
 
     $body      = rest_json_body();
     $base_sha1 = is_string($body['base_sha1'] ?? null) ? trim($body['base_sha1']) : '';

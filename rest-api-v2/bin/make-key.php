@@ -67,7 +67,8 @@ function usage(): void
 
   --wiki-user は、このキーが名乗る PukiWiki ユーザー名（pukiwiki.ini.php の
   $auth_users のキー）。$edit_auth を有効にしているサイトでは、これを指定しないと
-  書き込みが全ページ 403 edit_forbidden になる。read 専用キーには不要。
+  書き込みが全ページ 403 edit_forbidden になる。同様に $read_auth を有効にして
+  いるサイトでは、read キーに指定しないと取得が 403・一覧と検索が空になる。
 
 TXT;
 }
@@ -156,10 +157,6 @@ if (!preg_match('/^[A-Za-z0-9_\-\.]{1,64}$/', $opts['label'])) {
 if ($opts['wiki-user'] !== null) {
     if (!preg_match('/^[A-Za-z0-9_\-\.@]{1,64}$/', $opts['wiki-user'])) {
         fwrite(STDERR, "--wiki-user は英数字・ハイフン・アンダースコア・ドット・@（64字以内）で指定してください。\n");
-        exit(1);
-    }
-    if ($opts['scope'] !== 'write') {
-        fwrite(STDERR, "--wiki-user は --scope write のときだけ意味があります（read キーは書き込まない）。\n");
         exit(1);
     }
 }

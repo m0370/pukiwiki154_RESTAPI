@@ -48,6 +48,29 @@ final class PageStore
         private Audit         $audit,
     ) {}
 
+    /** このリクエストの identity（API キー由来）。read 系にも適用する。 */
+    private string $id_actor     = '';
+    private string $id_wiki_user = '';
+    /** withIdentity() の再入ガード（write() の内側の assertReadable() で二重適用しない） */
+    private bool   $in_identity  = false;
+
+    /**
+     * このリクエストの identity を設定する。認証直後に 1 回だけ呼ぶ。
+     * read 系（read / listPages / search / assertReadable）はこの identity で
+     * $read_auth を評価する。設定しなければ従来どおり未ログイン扱い = fail-closed。
+     */
+    public function setIdentity(string $actor, string $wiki_user): void
+    {
+        $this->id_actor     = $actor;
+        $this->id_wiki_user = $wiki_user;
+    }
+
+    /** 設定済み identity で $fn を実行する（read 系用のショートハンド） */
+    private function asIdentity(callable $fn): mixed
+    {
+        return $this->withIdentity($this->id_actor, $this->id_wiki_user, $fn);
+    }
+
     // -------------------------------------------------------------------------
     // 読み取り
     // -------------------------------------------------------------------------
@@ -61,6 +84,7 @@ final class PageStore
      */
     public function read(string $page): array
     {
+        return $this->asIdentity(function () use ($page) {
         $this->validatePageName($page);
         $this->assertReadable($page);
         $file = $this->filePath($page);
@@ -83,6 +107,7 @@ final class PageStore
             'is_frozen'   => function_exists('is_freeze')   ? (bool)is_freeze($page)   : null,
             'is_editable' => function_exists('is_editable') ? (bool)is_editable($page) : null,
         ];
+        });
     }
 
     /**
@@ -91,8 +116,17 @@ final class PageStore
      */
     public function listPages(int $limit = 100, int $offset = 0): array
     {
+        return $this->asIdentity(function () use ($limit, $offset) {
         $all = [];
         foreach ($this->scanPages() as $page => $file) {
+            // PHP は "2022" のような数値文字列キーを int に変換する。
+            // 以降の strcmp()/canRead() は string を要求するため必ず戻す。
+            $page  = (string)$page;
+            // 閲覧不可ページは一覧からも除外する（search() と同じ扱い。
+            // 歯科wiki のようにページ名自体が個人情報の場合、名前の漏洩を防ぐ）
+            if (!$this->canRead($page)) {
+                continue;
+            }
             $mtime = (int)filemtime($file);
             $all[] = ['name' => $page, 'mtime' => $mtime, 'updated_at' => date('c', $mtime)];
         }
@@ -102,6 +136,7 @@ final class PageStore
             'pages' => array_slice($all, $offset, $limit),
             'total' => count($all),
         ];
+        });
     }
 
     /**
@@ -112,8 +147,10 @@ final class PageStore
      */
     public function search(string $query, int $limit = 20): array
     {
+        return $this->asIdentity(function () use ($query, $limit) {
         $results = [];
         foreach ($this->scanPages() as $page => $file) {
+            $page = (string)$page; // 数値ページ名が int キーになる（listPages と同じ理由）
             // 閲覧不可ページは本文を読む前に黙って除外する（本体 search プラグインと同じ挙動。
             // ここで assertReadable() を使うと1ページの閲覧不可で検索全体が 403 になるため使わない）
             if (!$this->canRead($page)) {
@@ -148,6 +185,7 @@ final class PageStore
             }
         }
         return $results;
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -167,6 +205,9 @@ final class PageStore
      */
     private function withIdentity(string $actor, string $wiki_user, callable $fn): mixed
     {
+        if ($this->in_identity) {
+            return $fn(); // 既に identity 適用中（write() → assertWritable() → assertReadable()）
+        }
         $saved = [
             $GLOBALS['auth_user']          ?? null,
             $GLOBALS['auth_user_fullname'] ?? null,
@@ -194,9 +235,11 @@ final class PageStore
             $GLOBALS['auth_user_groups']   = [];
         }
 
+        $this->in_identity = true;
         try {
             return $fn();
         } finally {
+            $this->in_identity = false;
             [
                 $GLOBALS['auth_user'],
                 $GLOBALS['auth_user_fullname'],
@@ -285,6 +328,7 @@ final class PageStore
     /** 閲覧不可なら 403 を投げる（read・revisions 用。検索のフィルタには canRead() を使う） */
     public function assertReadable(string $page): void
     {
+        $this->asIdentity(function () use ($page) {
         if ($this->canRead($page)) {
             return;
         }
@@ -300,6 +344,7 @@ final class PageStore
             "Page '{$page}' is not readable (protected by read authentication).",
             'read_forbidden'
         );
+        });
     }
 
     /**
