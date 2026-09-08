@@ -62,6 +62,41 @@ curl -H "Authorization: Bearer pkw2_..." \
 # → 200 + JSON
 ```
 
+### FTP でアップロードする場合
+
+`cp -r` が使えない環境では、**隠しファイルが落ちること**が最大の落とし穴です。
+機能上必要なドットファイルが 4 つあります:
+
+```
+rest-api-v2/.htaccess        api/ 以外を 403 にする
+rest-api-v2/api/.htaccess    URL 書き換えと Authorization ヘッダの引き継ぎ
+rest-api-v2/data/.htaccess   data/ の deny
+rest-api-v2/.user.ini        display_errors=Off
+```
+
+FTP クライアントの「隠しファイルを表示」を有効にしてから転送してください。
+落ちても API は動いてしまうため、欠落に気づけません。転送後に必ず:
+
+```bash
+curl -i https://example.com/rest-api-v2/config.local.php   # → 403（200 なら .htaccess が欠落）
+curl -i https://example.com/rest-api-v2/api/v1/pages/FrontPage  # → 401（404 なら書き換えが無効）
+```
+
+書き換えが効かない場合は PATH_INFO 形式
+（`.../api/v1/index.php/pages/FrontPage`）でも動作します。
+
+空ディレクトリ（`data/snapshots` `data/audit` `data/locks`）は作成不要です。
+初回アクセス時に API が自動で作成します。`test/` は本番に置かないでください。
+
+### アップデートの順序
+
+`lib/Identity.php` は v2.1 で追加した必須ファイルで、`lib/PageStore.php` が
+冒頭で `require_once` します。**必ず `lib/Identity.php` → `lib/PageStore.php` →
+`api/v1/index.php` → `bin/make-key.php` → `mcp/server.php` の順**で置いてください。
+順序を誤ると、その間 API 全体が 500 になります。
+
+既存の API キーはそのまま使えます（`keys.php` の形式と `lib/Auth.php` は無変更）。
+
 ### Apache 設定
 
 `.htaccess` を有効にしてください:

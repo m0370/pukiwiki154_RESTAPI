@@ -96,6 +96,68 @@ curl -i https://example.com/rest-api-v2/data/keys.php
 # → HTTP/1.1 403 Forbidden   ← 200 が返る場合は AllowOverride の設定を見直すこと
 ```
 
+### 2.1 FTP でアップロードする場合（レンタルサーバー）
+
+`cp -r` が使えない環境では、**隠しファイルが落ちること**が最大の落とし穴です。
+本体には機能上必要なドットファイルが 4 つあります:
+
+```
+rest-api-v2/.htaccess        api/ 以外（lib・bin・mcp・test・docs・data・*.php）を 403 にする
+rest-api-v2/api/.htaccess    URL 書き換えと Authorization ヘッダの引き継ぎ
+rest-api-v2/data/.htaccess   data/ の deny（DocRoot 内に置く場合の最後の砦）
+rest-api-v2/.user.ini        display_errors=Off（PHP 警告が JSON に混入するのを防ぐ）
+```
+
+FileZilla・Cyberduck・macOS の Finder はいずれも**既定で隠しファイルを表示しません**。
+フォルダごとドラッグ＆ドロップすると無言で落ちることがあり、しかも
+**落ちても API は動いてしまうため気づけません**。アップロード前に必ず
+隠しファイルを表示する設定にしてください
+（FileZilla: サーバー → 強制的に隠しファイルを表示する／
+Cyberduck: 表示 → 不可視ファイルを表示）。
+
+- **空ディレクトリは作らなくて構いません。** `data/snapshots` `data/audit` `data/locks`
+  は初回アクセス時に API が自動で作成します
+- **`test/` はアップロードしないでください。** 置かれても Web からは実行できません
+  （各ファイルが `PHP_SAPI !== 'cli'` で 403 を返す）が、本番に不要です
+- 転送量は全 26 ファイル。`test/`（4 ファイル）を除けば **22 ファイル・約 125KB** です
+
+**アップロード後に必ず確認する**（上の (a)(b) に加えて）:
+
+```bash
+# (c) rest-api-v2/.htaccess が効いている（403 が返る）
+curl -i https://example.com/rest-api-v2/config.local.php
+# → HTTP/1.1 403 Forbidden   ← 200 や PHP ソースが返るなら .htaccess が落ちている
+
+# (d) api/.htaccess が効いている（401 が返る = 書き換えが動作）
+curl -i https://example.com/rest-api-v2/api/v1/pages/FrontPage
+# → 404 が返るなら書き換えが効いていない。PATH_INFO 形式なら書き換え無しでも動く:
+curl -i https://example.com/rest-api-v2/api/v1/index.php/pages/FrontPage
+```
+
+### 2.2 既存の設置をアップデートする場合
+
+**`lib/Identity.php` を最初にアップロードしてください。** v2.1 で追加した必須ファイルで、
+`lib/PageStore.php` が冒頭で `require_once` します。順序を誤ると、その間
+**API 全体が 500 になります**:
+
+| 上げ方 | 症状 |
+|---|---|
+| `Identity.php` を入れ忘れ | `PageStore.php` の `require_once` で Fatal（API 全体が 500） |
+| `lib/` を上げず `api/v1/index.php` だけ更新 | `Call to private method PageStore::withIdentity()` で Fatal |
+
+推奨する順序は `lib/Identity.php` → `lib/PageStore.php` → `api/v1/index.php` →
+`bin/make-key.php` → `mcp/server.php` です。
+
+**既存の API キーはそのまま使えます**（`data/keys.php` の形式と `lib/Auth.php` は無変更）。
+REST の URL・リクエスト/レスポンス形式・MCP ブリッジも無変更です。
+
+ただし **`$read_auth` を有効にしているサイトだけ**、2 点挙動が変わります:
+
+- ページ一覧が閲覧制限ページを返さなくなる（本体 `lib/html.php` と同じ扱いに統一）
+- read キーにも `--wiki-user` が必要になる（[3.4 節](#34-read_auth--edit_auth-を有効にしているサイト)）。
+  従来はそうしたサイトで read が全ページ 403 になり使えなかったため、
+  実質は「使えなかったものが使えるようになる」変更です
+
 ## 3. API キーの発行と管理
 
 キー管理はすべて CLI（`bin/make-key.php`）で行います。Web からキーを発行する画面は
