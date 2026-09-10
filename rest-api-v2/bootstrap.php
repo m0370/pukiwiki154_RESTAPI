@@ -127,12 +127,17 @@ if (is_file($pkwk_root . '/pukiwiki.ini.php') && is_file($pkwk_root . '/lib/init
         ? rtrim(DATA_DIR, '/')
         : $pkwk_root . '/' . rtrim(DATA_DIR, '/');
 } else {
+    if (defined('PKWK_REST_SETUP')) {
+        throw new RuntimeException('PukiWiki の直下に rest-api-v2 フォルダを設置してください。');
+    }
     // スタンドアロンモード（PukiWiki なしのユニットテスト用）
     $REST_WIKI_DIR = $REST_DATA_DIR . '/wiki';
     if (!is_dir($REST_WIKI_DIR) && !mkdir($REST_WIKI_DIR, 0755, true) && !is_dir($REST_WIKI_DIR)) {
         throw new \RuntimeException("Cannot create standalone wiki dir: {$REST_WIKI_DIR}");
     }
 }
+
+if (defined('PKWK_REST_SETUP')) return;
 
 // -------------------------------------------------------------------------
 // 2. データディレクトリ（Web 非公開領域）

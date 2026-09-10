@@ -1,11 +1,11 @@
 # PukiWiki 1.5.4 REST API Extension
 
-> **Version**: v2.0（`rest-api-v2/`）  
+> **Version**: v2.2.0（`rest-api-v2/`）
 > **対象**: PukiWiki 1.5.4（UTF-8 版）/ PHP 8.1+  
 > **ライセンス**: GPL v2 or (at your option) any later version（PukiWiki 1.5.4 本体に準拠）
 
 PukiWiki 1.5.4 に REST API と MCP（Model Context Protocol）サーバーを追加する拡張モジュールです。  
-**PukiWiki 本体を一切改変せず**、`rest-api-v2/` フォルダを置くだけで動作します。
+**PukiWiki 本体を改変せず**、FTPで配置し、ブラウザーで初期設定できます。
 
 ```
 Files are canonical      ← wiki/*.txt が唯一の正本（SQLite 等の DB は使わない）
@@ -16,6 +16,21 @@ page_write() 経由        ← Web UI と同一の副作用（diff/backup/Recent
 ```
 
 ---
+
+## FTPとブラウザーで始める（推奨）
+
+配布物 `dist/PukiWiki-REST-API-2.2.0.zip` を展開して、同梱の **はじめに.html** をブラウザーで開いてください。
+
+1. `rest-api-v2/` をPukiWiki直下へFTPで配置します。隠しファイルも転送します。
+2. `https://サイト/PukiWikiの設置先/rest-api-v2/setup/index.php` を開き、管理者パスワードでログインします。
+3. 非公開の保存先を検査・設定し、接続キーとWikiユーザーを指定します。添付変更は明示的な追加許可です。
+4. 同梱の `pukiwiki-mcp.mcpb` をClaude Desktopにインストールし、画面に表示されたAPI URLとキーを入力します。
+
+利用者によるSSH・ターミナル・Node.jsの手動導入・JSON編集は不要です。macOS/Windowsのデスクトップ拡張対応Claude Desktopが対象です。
+PHP 8.1以上・HTTPS・PHPから書き込めるWeb公開領域外の保存先が必要です。公開領域外に書けない環境では自動で安全性を緩めず、画面で案内します。
+設定画面は管理者専用です。キーの発行・失効・再発行もブラウザーでできます。詳細は [2.2の仕様](docs/upgrade-2.2.md) を参照してください。
+
+以下はサーバー管理者向けの手動設置・CLI利用の説明です。
 
 ## 目次
 
@@ -119,7 +134,7 @@ Cyberduck: 表示 → 不可視ファイルを表示）。
   は初回アクセス時に API が自動で作成します
 - **`test/` はアップロードしないでください。** 置かれても Web からは実行できません
   （各ファイルが `PHP_SAPI !== 'cli'` で 403 を返す）が、本番に不要です
-- 転送量は全 26 ファイル。`test/`（4 ファイル）を除けば **22 ファイル・約 125KB** です
+- 本番用ZIPには必要なファイルだけを収録しています。開発ツリーの `test/` やローカル設定をそのまま配布しないでください
 
 **アップロード後に必ず確認する**（上の (a)(b) に加えて）:
 
@@ -136,32 +151,21 @@ curl -i https://example.com/rest-api-v2/api/v1/index.php/pages/FrontPage
 
 ### 2.2 既存の設置をアップデートする場合
 
-**`lib/Identity.php` を最初にアップロードしてください。** v2.1 で追加した必須ファイルで、
-`lib/PageStore.php` が冒頭で `require_once` します。順序を誤ると、その間
-**API 全体が 500 になります**:
+FTPで既存のAPIフォルダをバックアップし、新版を別名でアップロードします。
+既存の `config.local.php` を新版へコピーした後、APIを利用していない時間にフォルダ名を入れ替えます。
+切替中は短時間利用できなくなります。接続確認に失敗したら古いフォルダへ戻してください。
+この方式なら個々のPHPファイルの転送順序を考える必要がありません。
 
-| 上げ方 | 症状 |
-|---|---|
-| `Identity.php` を入れ忘れ | `PageStore.php` の `require_once` で Fatal（API 全体が 500） |
-| `lib/` を上げず `api/v1/index.php` だけ更新 | `Call to private method PageStore::withIdentity()` で Fatal |
+既存キー・非公開保存先はそのまま使えます。`config.local.php` や非公開データを配布物で上書きしないでください。
+旧構成でDocRoot内の `rest-api-v2/data` を明示許可している場合は、そのデータも失わないよう別途バックアップ・移行します。
+ブラウザー初期設定はDocRoot外への新規設置が対象で、既存データの移設は自動では行いません。
 
-推奨する順序は `lib/Identity.php` → `lib/PageStore.php` → `api/v1/index.php` →
-`bin/make-key.php` → `mcp/server.php` です。
-
-**既存の API キーはそのまま使えます**（`data/keys.php` の形式と `lib/Auth.php` は無変更）。
-REST の URL・リクエスト/レスポンス形式・MCP ブリッジも無変更です。
-
-ただし **`$read_auth` を有効にしているサイトだけ**、2 点挙動が変わります:
-
-- ページ一覧が閲覧制限ページを返さなくなる（本体 `lib/html.php` と同じ扱いに統一）
-- read キーにも `--wiki-user` が必要になる（[3.4 節](#34-read_auth--edit_auth-を有効にしているサイト)）。
-  従来はそうしたサイトで read が全ページ 403 になり使えなかったため、
-  実質は「使えなかったものが使えるようになる」変更です
+`attachments_write` は既存キーには付与されません。添付変更が必要な場合は管理者画面で専用キーを発行してください。
+MCPBも同梱の最新版へ更新します。PHP CLI直結MCPは互換版で、追加機能一式はNodeブリッジ／MCPBが対象です。
 
 ## 3. API キーの発行と管理
 
-キー管理はすべて CLI（`bin/make-key.php`）で行います。Web からキーを発行する画面は
-意図的に用意していません。
+キー管理はブラウザーの `setup/index.php`、または CLI（`bin/make-key.php`）で行えます。ブラウザーではPukiWiki管理者の認証が必須です。
 
 ### 3.1 キーを発行する
 

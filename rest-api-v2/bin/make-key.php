@@ -33,6 +33,7 @@ if (php_sapi_name() !== 'cli') {
 // Web 側（bootstrap.php）と同じ解決ロジックを使う。ここがずれると
 // キーを作った場所と読む場所が食い違い、原因の分かりにくい 401 になる。
 require_once dirname(__DIR__) . '/lib/LocalConfig.php';
+require_once dirname(__DIR__) . '/lib/KeyStore.php';
 $keys_file = LocalConfig::keysFile();
 
 // ---- 引数解析 -------------------------------------------------------------
@@ -138,7 +139,7 @@ if ($opts['revoke'] !== null) {
         fwrite(STDERR, "ラベル '{$opts['revoke']}' のキーは見つかりませんでした。\n");
         exit(1);
     }
-    save_keys($keys_file, $keys);
+    (new KeyStore($keys_file))->revoke($opts['revoke']);
     echo "キー '{$opts['revoke']}' を失効（削除）しました。\n";
     exit(0);
 }
@@ -179,18 +180,8 @@ if ($opts['expires'] !== null) {
     $expires_at = $t;
 }
 
-$raw_key = 'pkw2_' . bin2hex(random_bytes(24)); // 192bit エントロピー
-
-$keys[] = [
-    'label'      => $opts['label'],
-    'key_sha256' => hash('sha256', $raw_key),
-    'scope'      => $opts['scope'],
-    'expires_at' => $expires_at,
-    'ip_allow'   => $opts['ip'],
-    'wiki_user'  => $opts['wiki-user'],
-    'created_at' => time(),
-];
-save_keys($keys_file, $keys);
+if (!is_dir(dirname($keys_file))) mkdir(dirname($keys_file), 0750, true);
+$raw_key = (new KeyStore($keys_file))->create($opts['label'], $opts['scope'], $opts['wiki-user'] ?? '', false, $expires_at, $opts['ip']);
 
 echo "APIキーを作成しました。\n\n";
 echo "  label  : {$opts['label']}\n";

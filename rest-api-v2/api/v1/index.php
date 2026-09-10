@@ -45,6 +45,9 @@ function rest_query_int(string $name, int $default, int $min, int $max): int
 /** リクエストパスを取得（マウント位置に依存しない） */
 function rest_parse_path(array $req): string
 {
+    if (isset($req['query']['route']) && is_string($req['query']['route'])) {
+        return '/' . ltrim($req['query']['route'], '/');
+    }
     // Apache 非 rewrite / php -S: /api/v1/index.php/pages/Foo 形式（PATH_INFO）
     if ($req['path_info'] !== '') {
         return '/' . ltrim(rawurldecode($req['path_info']), '/');
@@ -100,6 +103,9 @@ function rest_json_body(): array
 // -------------------------------------------------------------------------
 $router = new Router();
 
+require_once $REST_DIR . '/lib/ExtraRoutes.php';
+rest_register_extra_routes($router, $auth);
+
 // GET /pages — ページ一覧
 $router->get('/pages', function () use ($auth): Response {
     global $REST_REQUEST, $REST_PAGES;
@@ -133,7 +139,7 @@ $router->get('/search', function () use ($auth): Response {
         throw new ApiException(400, 'Query must be at least 2 characters', 'query_too_short');
     }
     $limit   = rest_query_int('limit', 20, 1, 100);
-    $results = $pages->search($q, $limit);
+    $results = $pages->search($q, $limit, rest_query('mode', 'PHRASE'));
 
     return Response::ok([
         'query'   => $q,
@@ -191,6 +197,8 @@ $router->put('/pages/{page...}', function (array $vars) use ($auth): Response {
     $pages = $REST_PAGES->withIdentity(new Identity($key['label'], $key['wiki_user'] ?? ''));
 
     $body      = rest_json_body();
+    $notimestamp = $body['notimestamp'] ?? false;
+    if (!is_bool($notimestamp)) throw new ApiException(400, 'notimestamp must be a boolean', 'invalid_notimestamp');
     $base_sha1 = is_string($body['base_sha1'] ?? null) ? trim($body['base_sha1']) : '';
     $content   = is_string($body['content'] ?? null) ? $body['content'] : '';
 
@@ -211,7 +219,8 @@ $router->put('/pages/{page...}', function (array $vars) use ($auth): Response {
         $base_sha1,
         $key['label'],
         $REST_REQUEST['remote_addr'],
-        $key['wiki_user'] ?? ''
+        $key['wiki_user'] ?? '',
+        $notimestamp
     );
 
     $result['note'] = 'Content may have been normalized by PukiWiki '

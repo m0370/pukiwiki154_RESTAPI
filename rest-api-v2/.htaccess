@@ -1,8 +1,9 @@
 # PukiWiki REST API v2 — トップレベル保護ルール
 #
-# 方針: Web から直接叩いてよいのは api/ 以下だけ。それ以外は全て 403 にする。
+# 方針: Web から直接叩いてよいのは api/ と setup/（管理者認証画面）を公開する。
 #
-#   api/    REST エントリポイント（唯一の公開面）
+#   api/    REST エントリポイント
+#   setup/  初期設定・キー管理（HTTPS・管理者認証・CSRF検証）
 #   lib/    require される実装。HTTP から触る必要はない
 #   mcp/    MCP stdio サーバー（CLI 専用）
 #   bin/    キー管理 CLI（自前の CLI ガードもあるが二重に塞ぐ）
@@ -20,7 +21,7 @@ Options -Indexes
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    # ディレクトリ単位の拒否（api/ 以外すべて）
+    # 内部ディレクトリへの直接アクセスを拒否
     RewriteRule ^(data|test|bin|lib|mcp|docs)(/|$) - [F,L]
 
     # 直下のファイル（bootstrap.php, config.local.php, *.example 等）を拒否

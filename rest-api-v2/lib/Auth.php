@@ -91,6 +91,7 @@ final class Auth
             'label'     => (string)($matched['label'] ?? 'api'),
             'scope'     => $scope,
             'wiki_user' => (string)($matched['wiki_user'] ?? ''),
+            'attachments_write' => ($matched['attachments_write'] ?? false) === true,
         ];
     }
 

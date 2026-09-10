@@ -307,4 +307,25 @@ $GLOBALS['edit_auth_pages'] = $saved_edit_pages;
 $w3 = $REST_PAGES->write($guarded, "制限解除後の上書き\n", $guarded_sha1, 'integration-key');
 ok($w3['changed'] === true, 'edit_auth を戻すと再び書ける（回帰確認）');
 
+section('14. notimestamp');
+$stamp_page = '統合テスト/更新日時維持';
+$r = $REST_PAGES->write($stamp_page, "初版\n", PageStore::EMPTY_SHA1, 'stamp-test');
+$stamp_file = $REST_PAGES->filePath($stamp_page);
+touch($stamp_file, 1500000000); clearstatcache(true, $stamp_file);
+$before = $REST_PAGES->read($stamp_page);
+$recent_before = file_get_contents($pkwk_root . '/cache/recent.dat');
+$r = $REST_PAGES->write($stamp_page, "日時を維持した改訂\n", $before['sha1'], 'stamp-test', '', '', true);
+ok($r['mtime'] === 1500000000, 'notimestamp=trueは更新日時を維持');
+ok($r['changed'] && $r['new_sha1'] !== $before['sha1'], '本文とSHA1は更新');
+ok($r['snapshot'] !== null, '日時維持でもスナップショットを保存');
+ok($recent_before === file_get_contents($pkwk_root . '/cache/recent.dat'), '更新一覧を並べ替えない');
+expect_api_error(fn() => $REST_PAGES->write($stamp_page, "競合\n", $before['sha1'], 'stamp-test', '', '', true), 409, '日時維持でも競合を拒否');
+$r2 = $REST_PAGES->write($stamp_page, "通常の改訂\n", $r['new_sha1'], 'stamp-test');
+ok($r2['mtime'] > 1500000000, '省略時は日時を更新');
+
+$new = $REST_PAGES->write('統合テスト/日時維持指定の新規作成', "新規本文\n", PageStore::EMPTY_SHA1, 'stamp-test', '', '', true);
+ok($new['mtime'] > 1500000000, '新規ページではnotimestampを指定しても現在の作成日時');
+$new_content = $REST_PAGES->read('統合テスト/日時維持指定の新規作成')['content'];
+ok(!str_contains($new_content, '1970-01-01'), '新規ページのauthor日時がepochにならない');
+
 summary();

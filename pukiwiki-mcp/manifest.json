@@ -1,0 +1,29 @@
+{
+  "manifest_version": "0.3",
+  "name": "pukiwiki-rest-api",
+  "display_name": "PukiWiki REST API",
+  "version": "2.2.0",
+  "description": "PukiWikiの閲覧・AND/OR検索・編集・標準バックアップ・添付ファイル管理。",
+  "author": { "name": "PukiWiki REST API contributors" },
+  "license": "GPL-2.0-or-later",
+  "server": {
+    "type": "node",
+    "entry_point": "server.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server.mjs"],
+      "env": {
+        "PUKIWIKI_API_URL": "${user_config.api_url}",
+        "PUKIWIKI_API_KEY": "${user_config.api_key}",
+        "PUKIWIKI_FILES_DIR": "${user_config.files_dir}"
+      }
+    }
+  },
+  "compatibility": { "platforms": ["darwin", "win32"], "runtimes": { "node": ">=18" } },
+  "user_config": {
+    "api_url": { "type": "string", "title": "API URL", "description": "ブラウザーのPukiWiki API設定画面に表示されたURLを貼り付けてください。", "required": true },
+    "api_key": { "type": "string", "title": "APIキー", "description": "PukiWiki API設定画面で発行した接続キー。", "sensitive": true, "required": true },
+    "files_dir": { "type": "directory", "title": "添付用フォルダ", "description": "添付のアップロード元とダウンロード先。このフォルダ内だけを読み書きします。", "default": "${HOME}/Downloads", "required": true }
+  },
+  "tools_generated": true
+}

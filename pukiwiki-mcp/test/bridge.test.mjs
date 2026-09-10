@@ -132,17 +132,25 @@ test('initialize がプロトコル版と serverInfo を返す', async () => {
   assert.equal(resp.result.serverInfo.name, 'pukiwiki-mcp');
 });
 
-test('tools/list が 6 ツールを返す', async () => {
+test('tools/list が 14 ツールを返す', async () => {
   const resp = await bridge.request('tools/list');
   const names = resp.result.tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
+    'wiki_delete_attachment',
+    'wiki_download_attachment',
+    'wiki_get_capabilities',
+    'wiki_list_attachments',
     'wiki_list_pages',
     'wiki_page_revisions',
+    'wiki_read_attachment',
     'wiki_read_page',
     'wiki_read_revision',
+    'wiki_read_standard_backup',
     'wiki_search',
+    'wiki_standard_backups',
+    'wiki_upload_attachment',
     'wiki_write_page',
-  ]);
+  ].sort());
 });
 
 test('ping が空オブジェクトを返す', async () => {

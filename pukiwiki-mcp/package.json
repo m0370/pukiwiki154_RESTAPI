@@ -1,6 +1,6 @@
 {
   "name": "pukiwiki-mcp",
-  "version": "0.1.0",
+  "version": "2.2.0",
   "description": "MCP (Model Context Protocol) stdio bridge for the PukiWiki 1.5.4 REST API v2 extension. Lets Claude Desktop / Claude Code read and write a remote PukiWiki over HTTPS with a scoped API key.",
   "type": "module",
   "bin": {

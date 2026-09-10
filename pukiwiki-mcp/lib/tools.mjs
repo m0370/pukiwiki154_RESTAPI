@@ -10,6 +10,7 @@
  * License: GPL v2 or (at your option) any later version
  */
 
+import { fileHandlers, fileDefinitions } from './file-tools.mjs';
 import { RestError } from './rest-client.mjs';
 
 /** sha1('') — 新規ページ作成時の base_sha1 */
@@ -150,7 +151,9 @@ async function toolSearch(client, args) {
 
   let r;
   try {
-    r = await client.search(query, limit);
+    const mode = strArg(args, 'mode') || 'PHRASE';
+    if (!['PHRASE','AND','OR'].includes(mode.toUpperCase())) return {text:'mode は PHRASE / AND / OR を指定してください。',isError:true};
+    r = await client.search(query, limit, mode.toUpperCase());
   } catch (e) {
     return { text: errorText('Search failed', e), isError: true };
   }
@@ -173,10 +176,12 @@ async function toolWritePage(client, args) {
   const page = strArg(args, 'page', true);
   const base_sha1 = strArg(args, 'base_sha1', true).trim();
   const content = strArg(args, 'content', true);
+  const notimestamp = args.notimestamp ?? false;
+  if (typeof notimestamp !== 'boolean') return {text:'notimestamp は true / false を指定してください。',isError:true};
 
   let r;
   try {
-    r = await client.writePage(page, base_sha1, content);
+    r = await client.writePage(page, base_sha1, content, notimestamp);
   } catch (e) {
     return { text: errorText('Write failed', e), isError: true };
   }
@@ -188,6 +193,7 @@ async function toolWritePage(client, args) {
       `New SHA1 : ${r.new_sha1}`,
       `Changed  : ` + (r.changed ? 'yes' : 'no (content was identical)'),
       `Size     : ${r.size} bytes`,
+      `Timestamp preserved: ${notimestamp && !r.is_new ? 'yes' : 'no'}`,
       '',
       'NOTE: PukiWiki normalized the content (#author line, heading anchors).',
       'Before further edits, call wiki_read_page again and use the new SHA1 as base_sha1.',
@@ -259,11 +265,17 @@ const HANDLERS = {
 };
 
 export async function callTool(client, name, args) {
-  const handler = HANDLERS[name];
+  const handler = HANDLERS[name] || fileHandlers[name];
   if (!handler) {
     throw new JsonRpcError(ERR_PARAMS, `Unknown tool: ${name}`);
   }
-  const { text, isError } = await handler(client, args);
+  let output;
+  try { output = await handler(client, args); } catch(e) {
+    if (!fileHandlers[name]) throw e;
+    return {content:[{type:'text',text:e.message}],isError:true};
+  }
+  if (output.content) return output;
+  const { text, isError } = output;
   const result = { content: [{ type: 'text', text }] };
   if (isError) {
     result.isError = true;
@@ -273,6 +285,7 @@ export async function callTool(client, name, args) {
 
 export function toolDefinitions() {
   return [
+    ...fileDefinitions(),
     {
       name: 'wiki_read_page',
       description: 'Read a PukiWiki page with its metadata (SHA1, frozen state). '
@@ -299,12 +312,13 @@ export function toolDefinitions() {
     },
     {
       name: 'wiki_search',
-      description: 'Full-text search across all pages (case-insensitive substring, '
+      description: 'Full-text search. mode: PHRASE (default), AND (all whitespace-separated terms), OR (any term). Case-insensitive, '
         + 'Japanese/English). Minimum 2 characters.',
       inputSchema: {
         type: 'object',
         properties: {
           query: { type: 'string' },
+          mode: { type: 'string', enum: ['PHRASE','AND','OR'], default: 'PHRASE' },
           limit: { type: 'integer', default: 10 },
         },
         required: ['query'],
@@ -325,6 +339,7 @@ export function toolDefinitions() {
         type: 'object',
         properties: {
           page: { type: 'string', description: 'Target page name' },
+          notimestamp: {type:'boolean',default:false,description:'trueなら既存ページの更新日時を維持します。更新一覧へ再浮上しません。スナップショットと監査は記録します。'},
           base_sha1: {
             type: 'string',
             description: '40-char SHA1 from wiki_read_page (optimistic lock)',

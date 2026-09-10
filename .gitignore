@@ -27,3 +27,7 @@ package-lock.json
 .idea/
 *.swp
 *~
+
+# 配布物（tools/build-release.pyで生成）
+/dist/
+rest-api-v2/.setup.lock

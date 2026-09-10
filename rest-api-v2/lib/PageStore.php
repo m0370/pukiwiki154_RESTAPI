@@ -212,47 +212,59 @@ final class PageStore
      *
      * @return array<array{page: string, snippet: string, name_match: bool}>
      */
-    public function search(string $query, int $limit = 20): array
+    public function search(string $query, int $limit = 20, string $mode = 'PHRASE'): array
     {
-        return $this->applying(function () use ($query, $limit) {
-        $results = [];
-        foreach ($this->scanPages() as $page => $file) {
-            $page = (string)$page; // 数値ページ名が int キーになる（listPages と同じ理由）
-            // 閲覧不可ページは本文を読む前に黙って除外する（本体 search プラグインと同じ挙動。
-            // ここで assertReadable() を使うと1ページの閲覧不可で検索全体が 403 になるため使わない）
-            if (!$this->canRead($page)) {
-                continue;
-            }
-            $name_hit = mb_stripos($page, $query, 0, 'UTF-8') !== false;
-
-            $content = file_get_contents($file);
-            if ($content === false) {
-                continue;
-            }
-            $pos = mb_stripos($content, $query, 0, 'UTF-8');
-
-            if (!$name_hit && $pos === false) {
-                continue;
-            }
-
-            $snippet = '';
-            if ($pos !== false) {
-                $start   = max(0, $pos - 40);
-                $snippet = mb_substr($content, $start, 80 + mb_strlen($query, 'UTF-8'), 'UTF-8');
-                $snippet = str_replace(["\r", "\n"], ' ', $snippet);
-                if ($start > 0) {
-                    $snippet = '…' . $snippet;
-                }
-                $snippet .= '…';
-            }
-
-            $results[] = ['page' => $page, 'snippet' => $snippet, 'name_match' => $name_hit];
-            if (count($results) >= $limit) {
-                break;
-            }
+        $mode = strtoupper($mode);
+        if (!in_array($mode, ['PHRASE', 'AND', 'OR'], true)) {
+            throw new ApiException(400, 'mode must be PHRASE, AND or OR', 'invalid_search_mode');
         }
-        return $results;
+        $query = trim($query);
+        if ($query === '' || mb_strlen($query, 'UTF-8') > 500) {
+            throw new ApiException(400, 'Query must contain 1 to 500 characters', 'invalid_query');
+        }
+        $terms = $mode === 'PHRASE' ? [$query] : preg_split('/[\s\x{3000}]+/u', $query, -1, PREG_SPLIT_NO_EMPTY);
+        if (!$terms || count($terms) > 20) {
+            throw new ApiException(400, 'Use 1 to 20 search terms', 'invalid_query');
+        }
+        return $this->applying(function () use ($terms, $limit, $mode) {
+            $results = [];
+            foreach ($this->scanPages() as $page => $file) {
+                $page = (string)$page;
+                if (!$this->canRead($page)) continue;
+                $content = file_get_contents($file);
+                if ($content === false) continue;
+                $hits = 0; $name_hit = false; $first = false;
+                foreach ($terms as $term) {
+                    $in_name = mb_stripos($page, $term, 0, 'UTF-8') !== false;
+                    $pos = mb_stripos($content, $term, 0, 'UTF-8');
+                    if ($in_name || $pos !== false) ++$hits;
+                    $name_hit = $name_hit || $in_name;
+                    if ($pos !== false && ($first === false || $pos < $first)) $first = $pos;
+                }
+                if ($mode === 'OR' ? $hits === 0 : $hits !== count($terms)) continue;
+                $snippet = $first === false ? '' : mb_substr($content, max(0, $first - 40), 160, 'UTF-8');
+                $results[] = ['page' => $page, 'snippet' => str_replace(["\r", "\n"], ' ', $snippet), 'name_match' => $name_hit];
+                if (count($results) >= max(1, min(100, $limit))) break;
+            }
+            return $results;
         });
+    }
+
+    /** 添付操作もページ保存と同じ identity・保護・ロックを通す。 */
+    public function withWritablePage(string $page, callable $operation): mixed
+    {
+        $this->validatePageName($page);
+        $lock = $this->acquireLock($page);
+        try {
+            return $this->applying(function () use ($page, $operation) {
+                $this->assertWritable($page, '');
+                if ((defined('PKWK_READONLY') && PKWK_READONLY) || in_array($page, $this->protected_pages, true)) {
+                    throw new ApiException(403, 'Page is protected', 'page_protected');
+                }
+                if (!is_file($this->filePath($page))) throw new ApiException(404, 'Page not found', 'page_not_found');
+                return $operation();
+            });
+        } finally { $this->releaseLock($lock); }
     }
 
     // -------------------------------------------------------------------------
@@ -319,7 +331,7 @@ final class PageStore
      * $fixed_heading_anchor を一時無効化し、非 Markdown ページは page_write() へ
      * 素通しで委譲する。よって存在すれば無条件に使ってよい。
      */
-    private static function writeThroughPukiWiki(string $page, string $body): void
+    private static function writeThroughPukiWiki(string $page, string $body, bool $notimestamp = false): void
     {
         // md.inc.php は通常ロードされていない（bootstrap はプラグインを読まない）。
         // exist_plugin() が require_once してくれる。md.inc.php のトップレベルは
@@ -329,10 +341,10 @@ final class PageStore
             exist_plugin('md');
         }
         if (function_exists('md_page_write')) {
-            md_page_write($page, $body);
+            md_page_write($page, $body, $notimestamp);
             return;
         }
-        page_write($page, $body);
+        page_write($page, $body, $notimestamp);
     }
 
     // -------------------------------------------------------------------------
@@ -414,7 +426,8 @@ final class PageStore
         // CLI・テストからの直呼び用に残してある互換引数。
         string $actor = '',
         string $ip = '',
-        string $wiki_user = ''
+        string $wiki_user = '',
+        bool $notimestamp = false
     ): array {
         // identity 未設定のインスタンス（CLI・テスト・MCP の直呼び）では、引数から
         // 1 度だけ identity を組み立てて自分自身に委譲する。HTTP 経路は認証直後に
@@ -422,7 +435,7 @@ final class PageStore
         // （identity が唯一の情報源。read と write で二重管理しない）。
         if ($this->identity === null) {
             return $this->withIdentity(new Identity($actor, $wiki_user))
-                        ->write($page, $new_body, $base_sha1, $actor, $ip, $wiki_user);
+                        ->write($page, $new_body, $base_sha1, $actor, $ip, $wiki_user, $notimestamp);
         }
         $actor     = $this->identity->actor;
         $wiki_user = $this->identity->wiki_user;
@@ -493,7 +506,7 @@ final class PageStore
             // 認可・CAS・書き込みは 1 つの applying() の内側で完結させる。
             // 後段（changed 判定・監査ログ）で要る値はここから受け取る。
             [$is_new, $old_sha1] = $this->applying(function () use (
-                $page, $new_body, $base_sha1, $ip, $file
+                $page, $new_body, $base_sha1, $ip, $file, $notimestamp
             ): array {
                 $this->assertWritable($page, $ip);
 
@@ -525,9 +538,13 @@ final class PageStore
 
                 // 書き込み本体
                 if (function_exists('page_write')) {
-                    self::writeThroughPukiWiki($page, $new_body);
+                    self::writeThroughPukiWiki($page, $new_body, $notimestamp && $exists);
                 } else {
+                    $old_mtime = $exists ? filemtime($file) : false;
                     self::atomicWrite($file, $new_body);
+                    if ($notimestamp && $old_mtime !== false && !touch($file, $old_mtime)) {
+                        throw new ApiException(500, 'Cannot preserve page timestamp', 'write_failed');
+                    }
                 }
                 return [!$exists, $old_sha1];
             });
@@ -556,6 +573,7 @@ final class PageStore
                 'new_sha1'  => $new_sha1,
                 'size'      => strlen($stored),
                 'snapshot'  => $snapshot_id,
+                'notimestamp' => $notimestamp,
             ]);
 
             return [
@@ -565,6 +583,7 @@ final class PageStore
                 'new_sha1' => $new_sha1,
                 'size'     => strlen($stored),
                 'mtime'    => $mtime,
+                'notimestamp' => $notimestamp,
                 'snapshot' => $snapshot_id,
             ];
         } finally {

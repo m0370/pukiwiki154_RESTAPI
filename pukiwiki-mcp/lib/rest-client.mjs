@@ -37,14 +37,18 @@ export class RestClient {
   }
 
   async request(method, path, { query = null, body = null } = {}) {
-    let url = this.baseUrl + path;
+    const base = new URL(this.baseUrl);
+    const queryRoute = base.pathname.endsWith('/index.php');
+    if (queryRoute) base.searchParams.set('route', decodeURIComponent(path));
+    let url = queryRoute ? base.toString() : this.baseUrl + path;
     if (query !== null) {
       const qs = new URLSearchParams(query).toString();
-      if (qs !== '') url += '?' + qs;
+      if (qs !== '') url += (url.includes('?') ? '&' : '?') + qs;
     }
 
     const options = {
       method,
+      redirect: 'error',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Accept': 'application/json',
@@ -100,13 +104,13 @@ export class RestClient {
     return this.request('GET', '/pages', { query: { limit, offset } });
   }
 
-  search(q, limit) {
-    return this.request('GET', '/search', { query: { q, limit } });
+  search(q, limit, mode = 'PHRASE') {
+    return this.request('GET', '/search', { query: { q, limit, mode } });
   }
 
-  writePage(page, base_sha1, content) {
+  writePage(page, base_sha1, content, notimestamp = false) {
     return this.request('PUT', '/pages/' + RestClient.encodePagePath(page),
-      { body: { base_sha1, content } });
+      { body: { base_sha1, content, notimestamp } });
   }
 
   pageRevisions(page) {

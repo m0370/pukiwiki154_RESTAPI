@@ -329,4 +329,16 @@ if ($read_auth_on && is_file($REST_PAGES->filePath($secret))) {
     }
 }
 
+section('10. Markdown + notimestamp');
+if (function_exists('md_page_write')) {
+    $md_page = 'サイト統合テスト/MD日時維持';
+    @unlink($REST_PAGES->filePath($md_page));
+    $r = $REST_PAGES->write($md_page, "#md\n* 箇条書き\n&now;\n", $EMPTY, 'md-stamp', '', $wiki_user);
+    touch($REST_PAGES->filePath($md_page), 1500000000);
+    $r = $REST_PAGES->write($md_page, "#md\n* 改訂した箇条書き\n&now;\n", $r['new_sha1'], 'md-stamp', '', $wiki_user, true);
+    $stored = file_get_contents($REST_PAGES->filePath($md_page));
+    ok($r['mtime'] === 1500000000, 'Markdownでも更新日時を維持');
+    ok(str_contains($stored, '&now;') && !preg_match('/\[#\w+\]/', $stored), '日時維持でもMarkdownマクロ・箇条書きを保護');
+}
+
 summary();

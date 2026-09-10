@@ -147,7 +147,7 @@ final class McpHandler
             return 'Query must be at least 2 characters.';
         }
         $limit   = max(1, min(100, (int)($args['limit'] ?? 10)));
-        $results = $this->pages->search($query, $limit);
+        $results = $this->pages->search($query, $limit, self::strArg($args, 'mode') ?: 'PHRASE');
 
         if (empty($results)) {
             return "No pages found for: {$query}";
@@ -167,9 +167,11 @@ final class McpHandler
         $page      = self::strArg($args, 'page', required: true);
         $base_sha1 = trim(self::strArg($args, 'base_sha1', required: true));
         $content   = self::strArg($args, 'content', required: true);
+        $notimestamp = $args['notimestamp'] ?? false;
+        if (!is_bool($notimestamp)) return 'notimestamp must be a boolean';
 
         try {
-            $r = $this->pages->write($page, $content, $base_sha1, $this->actor, '', $this->wiki_user);
+            $r = $this->pages->write($page, $content, $base_sha1, $this->actor, '', $this->wiki_user, $notimestamp);
         } catch (ApiException $e) {
             return "Write failed ({$e->error_code}): {$e->getMessage()}";
         }
@@ -237,6 +239,7 @@ final class McpHandler
                     'type'       => 'object',
                     'properties' => [
                         'query' => ['type' => 'string'],
+                        'mode' => ['type' => 'string', 'enum' => ['PHRASE','AND','OR']],
                         'limit' => ['type' => 'integer', 'default' => 10],
                     ],
                     'required'   => ['query'],
@@ -257,6 +260,7 @@ final class McpHandler
                     'type'       => 'object',
                     'properties' => [
                         'page'      => ['type' => 'string', 'description' => 'Target page name'],
+                        'notimestamp' => ['type'=>'boolean','default'=>false,'description'=>'Preserve the existing page timestamp; snapshots and audit remain enabled.'],
                         'base_sha1' => [
                             'type'        => 'string',
                             'description' => '40-char SHA1 from wiki_read_page (optimistic lock)',

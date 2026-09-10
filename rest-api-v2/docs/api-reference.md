@@ -90,7 +90,7 @@ Content-Type: application/json
 | 403 | `insufficient_scope` | read キーで書き込もうとした |
 | 403 | `page_protected` / `system_page` | FrontPage・MenuBar・`:` ページ |
 | 403 | `page_frozen` / `page_not_editable` | 凍結・編集不可ページ |
-| 403 | `edit_forbidden` | `$edit_auth` の編集認可ページ（API からは一律拒否） |
+| 403 | `edit_forbidden` | `$edit_auth` の編集認可ページ（キーに指定したWikiユーザーの認可を適用） |
 | 409 | `sha1_conflict` | 読んだ後に誰かが更新した → 再取得してやり直す |
 | 409 | `page_not_found_as_conflict` | 存在しないページに非 EMPTY の base を指定 |
 | 423 | `page_locked` | 別の書き込みが進行中 → リトライ |
@@ -171,3 +171,26 @@ curl -H "Authorization: Bearer $KEY" "$BASE/pages/メモ/今日/revisions/{id}" 
   （そのようなページ名は避けること）
 - 検索はファイル走査のため、数千ページ規模まで（それ以上はインデックスの導入を検討）
 - 削除・リネーム・添付ファイル操作の API はない（Web UI で行う）
+
+
+## v2.2の追加機能
+
+URL書き換えもPATH_INFOも使わない形式として `api/v1/index.php?route=/search&q=肺癌` が利用できます。
+`route` とクエリ値はそれぞれ一度だけURLエンコードします。NodeブリッジはベースURLが `index.php` で終わる場合にこの方式を使用します。
+
+- `GET /search?q=...&mode=PHRASE|AND|OR`。既定はPHRASEで互換維持。AND/ORは空白・全角空白で区切ります。最大500文字・20語、正規表現ではなく部分一致です。ANDはページ名・本文を合わせて全語一致します。ページ認可後に結果件数を制限します。
+- `PUT /pages/{page}` に任意の `notimestamp: true` を追加できます。既存ページの更新日時を維持します。省略時false、新規ページは作成日時になります。競合確認・履歴・監査ログは維持します。
+- `GET /capabilities`。バージョン、キーの権限、対応検索方式、添付転送上限を返します。
+- `GET /backups?page=...`。PukiWiki標準バックアップの `age`・日時の一覧。
+- `GET /backup?page=...&age=1`。指定版の本文・SHA1。APIスナップショットとは独立した履歴です。
+- `GET /attachments?page=...`。ファイル名・`age`・サイズ・更新日時・SHA256の一覧。age=0が現在の添付、正数が削除した添付です。
+- `GET /attachment?page=...&name=...&age=0`。`content_base64`・MIME・SHA256を返します。
+- `POST /attachments`。JSONで `page`, `name`, `content_base64` を送信して新規アップロード。既存添付は409で上書き拒否。
+- `POST /attachment/delete`。JSONで `page`, `name`, 現在の `sha256` を送信。履歴へ移動し、完全削除はしません。
+
+添付変更は `write` スコープに加えて `attachments_write: true` のキーが必要です。管理者がブラウザーで明示的に付与する委任であり、既存キーには追加されません。ページの閲覧・編集認証、ページと添付の凍結、保護ページを尊重します。標準の「添付は管理者のみ」の操作を、この限定されたAPIキーへ管理者が委任する設計です。
+
+添付の転送上限は5 MiB（アップロードは本体の `PLUGIN_ATTACH_MAX_FILESIZE` との小さい方）。空ファイルはアップロード不可。
+新規アップロードの拡張子は pdf/png/jpg/jpeg/gif/webp/txt/md/csv/docx/xlsx/pptx/zip。
+添付は実行・展開せず、PukiWiki標準の16進ファイル名で保存します。改名・履歴の完全削除は提供しません。
+バックアップと添付は、削除済みページ・システムページ・閲覧不可ページからは取得できません。

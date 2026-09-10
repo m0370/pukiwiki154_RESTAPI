@@ -20,6 +20,11 @@ Claude Desktop / Claude Code
 同一マシンで動かす PHP 直結版（`rest-api-v2/mcp/server.php`・API キー不要）とは
 別物です。使い分けは[本体 README のセクション 5](../README.md#5-mcp-サーバーclaude-連携) を参照してください。
 
+## Claude Desktopへの簡単な導入
+
+配布ZIP同梱の `pukiwiki-mcp.mcpb` をインストールし、API URL・APIキー・添付用フォルダを画面で設定してください。
+NodeランタイムはClaude Desktopが提供します。次のNode.js手動設定は開発者や他のMCPクライアント向けです。
+
 ## 必要な環境
 
 - Node.js 18 以上（依存パッケージなし・`npm install` 不要）
@@ -96,3 +101,16 @@ stdio 越しに全ツール・エラー系（409 競合 / 凍結 403 / スコー
 ## ライセンス
 
 GPL v2 or (at your option) any later version（PukiWiki 1.5.4 本体に準拠）
+
+
+## v2.2 の追加ツール
+
+`wiki_get_capabilities`、`wiki_standard_backups`、`wiki_read_standard_backup`、`wiki_list_attachments`、
+`wiki_read_attachment`、`wiki_download_attachment`、`wiki_upload_attachment`、`wiki_delete_attachment` を追加しました。
+`wiki_search` は `mode: PHRASE|AND|OR`、`wiki_write_page` は `notimestamp: true|false` に対応します。
+
+添付は最大5 MiB。アップロード元・ダウンロード先は `PUKIWIKI_FILES_DIR`（Desktopでは添付用フォルダ）配下に限定します。
+アップロード時の `file` はそのフォルダからの相対パスです。会話に添付したファイルを直接参照する機能ではありません。
+既存のローカルファイルやWikiの添付は上書きしません。添付削除はSHA256を確認して標準履歴へ移動します。
+画像はMCP画像コンテンツ、テキストはテキストリソース、PDF等はバイナリリソースで返します。内容の表示・解釈可否はクライアントにも依存します。
+PHP直結版のMCPは従来の4ツールに検索方式・notimestampを追加した互換版です。新機能一式はNode版／MCPBを利用してください。
