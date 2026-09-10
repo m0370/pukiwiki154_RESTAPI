@@ -1,4 +1,6 @@
-# PukiWiki REST API v2 — セットアップガイド
+# PukiWiki REST API v2 — サーバー設定・手動設置ガイド
+
+通常の導入は[FTPとブラウザーによる手順](../../README.md#install)を参照してください。キーの発行・失効は `rest-api-v2/setup/index.php` で行えます。この文書のCLI・環境変数設定は、手動設置やサーバー固有の調整が必要な場合に使います。
 
 > **対象**: PukiWiki 1.5.4 / PHP 8.1+  
 > **方式**: ファイルのみ（SQLite 等の DB は使わない）。正本は従来通り `wiki/*.txt`  
@@ -18,7 +20,7 @@ page_write() 経由     ← Web UI と同一の副作用（diff/backup/RecentCha
 全版スナップショット  ← API 書き込みごとに旧版・新版を保存（追記専用）
 ```
 
-v0.1（`rest-api/`、SQLite＋下書き承認方式）は参考実装として残していますが**非推奨**です。
+旧 `rest-api/` は現行ツリーから削除済みです。現在の実装は `rest-api-v2/` です。
 
 ## 必要な環境
 
@@ -41,7 +43,6 @@ cp -r rest-api-v2 /var/www/pukiwiki/
 mkdir -p /var/lib/pukiwiki-rest/data
 chown -R www-data:www-data /var/lib/pukiwiki-rest/data
 chmod 750 /var/lib/pukiwiki-rest/data
-rm -rf /var/www/pukiwiki/rest-api-v2/data   # 同梱の空 data/ は使わない
 
 # 3. その場所を指す（環境変数が届かないホスティングでは config.local.php）
 #    Apache: SetEnv PKWK_REST_DATA /var/lib/pukiwiki-rest/data
@@ -68,7 +69,7 @@ curl -H "Authorization: Bearer pkw2_..." \
 機能上必要なドットファイルが 4 つあります:
 
 ```
-rest-api-v2/.htaccess        api/ 以外を 403 にする
+rest-api-v2/.htaccess        api/ と setup/ 以外を 403 にする
 rest-api-v2/api/.htaccess    URL 書き換えと Authorization ヘッダの引き継ぎ
 rest-api-v2/data/.htaccess   data/ の deny
 rest-api-v2/.user.ini        display_errors=Off
@@ -83,7 +84,7 @@ curl -i https://example.com/rest-api-v2/api/v1/pages/FrontPage  # → 401（404 
 ```
 
 書き換えが効かない場合は PATH_INFO 形式
-（`.../api/v1/index.php/pages/FrontPage`）でも動作します。
+（`.../api/v1/index.php/pages/FrontPage`）でも動作します。PATH_INFOも使えない場合は `.../api/v1/index.php?route=/pages/FrontPage` を使えます。MCPBのAPI URLには `.../api/v1/index.php` を設定してください。
 
 空ディレクトリ（`data/snapshots` `data/audit` `data/locks`）は作成不要です。
 初回アクセス時に API が自動で作成します。`test/` は本番に置かないでください。
@@ -277,14 +278,7 @@ php rest-api-v2/bin/make-key.php --label my-editor --scope write --wiki-user tgo
 同じ identity で `$read_auth` を評価するため、`$read_auth` を使うサイトでは read キーにも
 指定してください（`$read_auth = 0` のサイトでは read キーに不要）。
 
-> ⚠ **`wiki_user` の実在は検証していません。** PukiWiki 本体の
-> `get_groups_from_username()`（`lib/auth.php`）はユーザー名自身を暗黙のグループとして
-> 返すため、`$auth_users` から削除済みのユーザー名でも認可を通ります。つまり
-> **Wiki 側のアカウントを消しても、そのユーザーを名乗る API キーは失効しません。**
-> パスワード変更・アカウント削除と API キーの失効は別の操作です。キーの停止は必ず
-> `make-key.php --revoke <ラベル>` で行ってください。
-> （キー発行時に `$auth_users` との突き合わせを行う改善は検討中。外部認証
-> （LDAP / SAML）への委任と、ローカルユーザーの検証を区別する必要があるため未実装です。）
+> ブラウザーでのキー発行では `$auth_users` に存在するユーザーを選択します。CLIでの指定と、発行後のユーザー削除は別途管理が必要です。Wikiユーザーの削除やパスワード変更ではAPIキーは自動失効しません。キーの停止は、ブラウザー設定画面の「失効」または `make-key.php --revoke <ラベル>` で行ってください。
 
 MCP 方式 A（PHP 直結）では環境変数 `PKWK_MCP_WIKI_USER` が同じ役割を持ちます。
 
