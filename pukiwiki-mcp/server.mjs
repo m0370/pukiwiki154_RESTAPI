@@ -29,7 +29,7 @@ import { callTool, toolDefinitions } from './lib/tools.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'pukiwiki-mcp';
-const SERVER_VERSION = '2.2.0';
+const SERVER_VERSION = '2.2.1';
 
 const ERR_METHOD = -32601;
 const ERR_INTERNAL = -32603;

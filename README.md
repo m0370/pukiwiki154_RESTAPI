@@ -2,9 +2,9 @@
 
 PukiWiki 1.5.4を、Claude Desktopから閲覧・検索・編集するための拡張です。**FTPで設置し、ブラウザーでAPIキーを発行して、Claude Desktopの設定欄へ貼り付ける**手順で利用できます。PukiWiki本体の改変は不要です。
 
-**公開版: v2.2.0** ／ PukiWiki 1.5.4 UTF-8版・PHP 8.1以上 ／ GPL-2.0-or-later
+**公開版: v2.2.1** ／ PukiWiki 1.5.4 UTF-8版・PHP 8.1以上 ／ GPL-2.0-or-later
 
-**[設置用ZIPをダウンロード](https://github.com/m0370/pukiwiki154_RESTAPI/releases/download/v2.2.0/PukiWiki-REST-API-2.2.0.zip)** · [リリース一覧](https://github.com/m0370/pukiwiki154_RESTAPI/releases)
+**[設置用ZIPをダウンロード](https://github.com/m0370/pukiwiki154_RESTAPI/releases/download/v2.2.1/PukiWiki-REST-API-2.2.1.zip)** · [リリース一覧](https://github.com/m0370/pukiwiki154_RESTAPI/releases)
 
 通常の導入にSSH・ターミナル操作・Node.jsの手動インストール・JSON編集は必要ありません。Cloudflareアカウントや `akismet2.inc.php` も不要です。
 
@@ -30,7 +30,7 @@ PukiWiki 1.5.4を、Claude Desktopから閲覧・検索・編集するための�
 
 必要なのは、稼働中のPukiWiki 1.5.4（UTF-8版）、PHP 8.1以上、HTTPS、FTPクライアントです。サーバーには**Web公開領域の外で、PHPが読み書きできる保存先**が必要です。APIのデータはiCloud・Dropbox・NFSなどの同期・ネットワークファイルシステム上では運用しないでください。
 
-[設置用ZIP](https://github.com/m0370/pukiwiki154_RESTAPI/releases/download/v2.2.0/PukiWiki-REST-API-2.2.0.zip)を展開します。GitHubの「Source code (zip)」ではなく、**`PukiWiki-REST-API-2.2.0.zip`** を選んでください。同梱の `はじめに.html` も手順書として使えます。
+[設置用ZIP](https://github.com/m0370/pukiwiki154_RESTAPI/releases/download/v2.2.1/PukiWiki-REST-API-2.2.1.zip)を展開します。GitHubの「Source code (zip)」ではなく、**`PukiWiki-REST-API-2.2.1.zip`** を選んでください。同梱の `はじめに.html` も手順書として使えます。
 
 ZIP内の **`rest-api-v2` フォルダ**を、PukiWikiの `index.php` や `pukiwiki.ini.php` と同じ階層へFTPでアップロードします。
 
@@ -88,7 +88,7 @@ PukiWikiを `/wiki/` に設置している場合は、`https://あなたのサ�
 
 デスクトップ拡張に対応したClaude Desktop（macOS / Windows）を使います。
 
-1. ZIP同梱の **`pukiwiki-mcp.mcpb`** を手元のPCに保存します。[MCPBだけのダウンロード](https://github.com/m0370/pukiwiki154_RESTAPI/releases/download/v2.2.0/pukiwiki-mcp.mcpb)もできます。
+1. ZIP同梱の **`pukiwiki-mcp.mcpb`** を手元のPCに保存します。[MCPBだけのダウンロード](https://github.com/m0370/pukiwiki154_RESTAPI/releases/download/v2.2.1/pukiwiki-mcp.mcpb)もできます。
 2. Claude Desktopの **設定 → 拡張機能（Extensions）→ 詳細設定（Advanced settings）→ Install Extension** から、そのファイルを選んでインストールします。
 3. 「PukiWiki REST API」拡張の設定画面に、次の3項目を入力して保存します。
 
@@ -104,7 +104,7 @@ PukiWikiを `/wiki/` に設置している場合は、`https://あなたのサ�
 
 ### Claude Codeで使う場合（macOS / Windows / Linux）
 
-Claude Codeには **ユーザースコープでの登録を推奨**します。同じPC・同じOSユーザーのすべての作業フォルダからWikiへ接続できます。[OS別の登録・既存設定からの移行手順](pukiwiki-mcp/README.md#claude-code-user)を参照してください。Node.js 18以上が必要です。
+Claude Codeには **ユーザースコープでの登録を推奨**します。同じPC・同じOSユーザーのすべての作業フォルダからWikiへ接続できます。[OS別の登録・既存設定からの移行手順](pukiwiki-mcp/README.md#claude-code-user)を参照してください。Node.js 18以上が必要です。設置用ZIPに同梱した `pukiwiki-mcp` フォルダをPC上で使います。
 
 この設定はClaude Desktopの通常のチャット用拡張とは別です。Macのキーチェーンや `run.sh` は必須ではありません。Android対応は当面対象外です。
 
@@ -155,6 +155,8 @@ PukiWiki本体の閲覧・編集制限、凍結、APIの保護ページ設定が
 添付は最大5 MiB（アップロードはPukiWiki側の上限にも従います）。既存ファイルの上書きはせず、削除は履歴へ保管します。削除済みページのバックアップ・添付履歴はAPIの対象外です。
 
 PHP・Node・HTTPでの機能検査は実施済みです。Claude Desktopへの実インストールとWindows実機は未検証です。[検証内容](docs/upgrade-2.2.md)を参照してください。
+
+v2.2.1の変更点は[リリースノート](docs/release-2.2.1.md)を参照してください。
 
 ## 開発者・サーバー管理者向け
 

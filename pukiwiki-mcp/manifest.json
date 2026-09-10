@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "pukiwiki-rest-api",
   "display_name": "PukiWiki REST API",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "PukiWikiの閲覧・AND/OR検索・編集・標準バックアップ・添付ファイル管理。",
   "author": { "name": "PukiWiki REST API contributors" },
   "license": "GPL-2.0-or-later",

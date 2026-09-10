@@ -30,6 +30,10 @@ try:
   except urllib.error.URLError:time.sleep(.1)
  else:raise RuntimeError('PHP server did not start')
  assert '管理者パスワード' in html
+ stylesheet=re.search(r'<link rel="stylesheet" href="([^"]+)"',html)
+ assert stylesheet and stylesheet[1]=='/skin/pukiwiki.css', 'PukiWiki stylesheet URL'
+ assert get(urllib.parse.urljoin(base,stylesheet[1])), 'PukiWiki stylesheet must be served'
+ assert "style-src 'self'" in browser.open(url).headers['Content-Security-Policy']
  html=post({'action':'initialize','csrf':csrf(html),'data_dir':str(root/'private')});assert not (public/'rest-api-v2/config.local.php').exists()
  html=post({'action':'login','csrf':csrf(html),'password':'fixture-admin-pass'});assert '非公開の保存先を設定' in html,html[:1500]
  html=post({'action':'initialize','csrf':'invalid','data_dir':str(root/'private')});assert not (public/'rest-api-v2/config.local.php').exists()
@@ -42,6 +46,7 @@ try:
  assert key not in (root/'private/keys.php').read_text()
  assert endpoint('/capabilities')[0]==401
  assert endpoint('/capabilities',token=key)[1]['attachments_write'] is True
+ assert endpoint('/capabilities',token=key)[1]['version']=='2.2.1'
  page='テスト/日本語 %20'
  status,result=endpoint('/pages/'+page,'PUT',{'content':'肺癌とALKについて\n','base_sha1':hashlib.sha1(b'').hexdigest()},key);assert status==201,(status,result)
  assert endpoint('/pages/'+page,token=key)[1]['page']==page
@@ -73,7 +78,7 @@ try:
    bridge.stdin.write(json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params})+'\n');bridge.stdin.flush()
    return json.loads(bridge.stdout.readline())
   try:
-   assert mcp('initialize',{'protocolVersion':'2024-11-05'})['result']['serverInfo']['version']=='2.2.0'
+   assert mcp('initialize',{'protocolVersion':'2024-11-05'})['result']['serverInfo']['version']=='2.2.1'
    assert len(mcp('tools/list',{})['result']['tools'])==14
    result=mcp('tools/call',{'name':'wiki_read_page','arguments':{'page':page}})['result']
    assert not result.get('isError') and page in result['content'][0]['text'],result

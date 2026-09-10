@@ -33,7 +33,7 @@ function rest_register_extra_routes(Router $router, Auth $auth): void
     $router->get('/capabilities', static function () use ($auth) {
         global $REST_REQUEST;
         $key = $auth->authenticate($REST_REQUEST['authorization'], 'read', $REST_REQUEST['remote_addr']);
-        return Response::ok(['version' => '2.2.0', 'scope' => $key['scope'], 'wiki_user' => $key['wiki_user'],
+        return Response::ok(['version' => '2.2.1', 'scope' => $key['scope'], 'wiki_user' => $key['wiki_user'],
             'attachments_write' => $key['attachments_write'], 'search_modes' => ['PHRASE','AND','OR'],
             'max_attachment_bytes' => WikiFiles::MAX_BYTES, 'standard_backups' => function_exists('get_backup')]);
     });

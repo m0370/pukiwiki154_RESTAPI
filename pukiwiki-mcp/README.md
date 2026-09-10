@@ -8,7 +8,7 @@ PukiWikiの閲覧・検索・編集・バックアップ取得・添付管理を
 
 1. ブラウザーで `https://あなたのサイト/rest-api-v2/setup/index.php` を開き、PukiWikiの凍結・解除用の管理者パスワードでログインします。
 2. 「接続キーを発行」でキー名・権限・Wikiユーザーを指定し、APIキーを発行します。添付のアップロード・削除を使う場合は、その許可も付けます。
-3. [pukiwiki-mcp.mcpbをダウンロード](https://github.com/m0370/pukiwiki154_RESTAPI/releases/download/v2.2.0/pukiwiki-mcp.mcpb)します。設置用ZIPにも同梱されています。
+3. [pukiwiki-mcp.mcpbをダウンロード](https://github.com/m0370/pukiwiki154_RESTAPI/releases/download/v2.2.1/pukiwiki-mcp.mcpb)します。設置用ZIPにも同梱されています。
 4. Claude Desktopの **設定 → 拡張機能（Extensions）→ 詳細設定（Advanced settings）→ Install Extension** でファイルを選びます。
 5. 「PukiWiki REST API」拡張の設定欄に次の値を入力して保存します。
 
