@@ -411,14 +411,9 @@ Node.js 18 以上が必要です（依存パッケージなし・`npm install` �
 }
 ```
 
-Claude Code ならコマンド一発でも登録できます:
+Claude Codeは **ユーザースコープ（`--scope user`）での登録を推奨**します。同じPC・同じOSユーザーのすべての作業フォルダから使えます。上のJSONは構造例で、`/path/to/...` や `pkw2_...` をそのまま登録するものではありません。
 
-```bash
-claude mcp add pukiwiki \
-  --env PUKIWIKI_API_URL=https://example.com/rest-api-v2/api/v1 \
-  --env PUKIWIKI_API_KEY=pkw2_... \
-  -- node /path/to/pukiwiki-mcp/server.mjs
-```
+[macOS / Linux・Windows別の登録手順](../pukiwiki-mcp/README.md#claude-code-user)では、実際のサーバーパスを自動取得し、API URLとキーを入力して登録します。既存のlocal/project設定からの移行手順も同じページにあります。`run.sh` やmacOSキーチェーンは必須ではありません。
 
 read スコープのキーなら閲覧・検索のみ、write スコープなら編集も可能です。
 書き込みはキーの label が監査ログと `#author` 行に記録されます。

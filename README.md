@@ -102,6 +102,12 @@ PukiWikiを `/wiki/` に設置している場合は、`https://あなたのサ�
 
 設定後、Claudeに「Wikiの接続状態を確認して」「FrontPageを読んで」と依頼してください。APIキー自体を会話本文へ貼り付ける必要はありません。
 
+### Claude Codeで使う場合（macOS / Windows / Linux）
+
+Claude Codeには **ユーザースコープでの登録を推奨**します。同じPC・同じOSユーザーのすべての作業フォルダからWikiへ接続できます。[OS別の登録・既存設定からの移行手順](pukiwiki-mcp/README.md#claude-code-user)を参照してください。Node.js 18以上が必要です。
+
+この設定はClaude Desktopの通常のチャット用拡張とは別です。Macのキーチェーンや `run.sh` は必須ではありません。Android対応は当面対象外です。
+
 <a id="multiple-keys"></a>
 ## 複数のPCで使う・キーを失効する
 

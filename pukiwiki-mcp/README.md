@@ -57,9 +57,70 @@ Claudeに「Wikiの接続状態を確認して」「FrontPageを読んで」と�
 
 サーバーへ[REST API](../README.md#install)を設置し、[ブラウザーで発行したキー](../README.md#issue-key)を使います。キーの発行にCLIを使うこともできますが、必須ではありません。
 
-### Nodeブリッジを設定ファイルから起動する
+<a id="claude-code-user"></a>
+### Claude Code：ユーザースコープで登録する（macOS / Windows / Linux）
 
-クライアントのMCP設定に次の項目を追加します。Claude Desktopを手動設定する場合は `claude_desktop_config.json`、Claude Codeでは `.mcp.json` など、クライアントの対応形式に合わせてください。
+Claude Codeには **`--scope user` を付けて登録することを推奨します**。同じPC・同じOSユーザーなら、どの作業フォルダで起動しても利用できます。省略すると現在のプロジェクトだけで使うlocalスコープになります。[Claude Code公式のスコープ説明](https://code.claude.com/docs/en/mcp#scope-hierarchy-and-precedence)も参照してください。
+
+Claude CodeとNode.jsをインストールしたうえで、ダウンロードした **`pukiwiki-mcp` フォルダ（`server.mjs` がある場所）でターミナルを開き**、以下を実行します。API URLとキーは実行後の入力欄へ貼り付けます。サーバーの絶対パスは自動取得するため、`/path/to/...` を書き換える作業はありません。登録後もこのフォルダを移動・削除しないでください。
+
+macOS / Linux（Bash。macOSの標準zshでは先に `bash` を実行）：
+
+```bash
+(
+  set -e
+  test -f server.mjs || { echo 'pukiwiki-mcpフォルダで実行してください'; exit 1; }
+  pkw_node=$(command -v node)
+  pkw_server="$PWD/server.mjs"
+  read -r -p 'API URL: ' pkw_url
+  read -r -s -p 'APIキー（入力は表示されません）: ' pkw_key
+  echo
+  test -n "$pkw_url" && test -n "$pkw_key" || exit 1
+  claude mcp add pukiwiki --scope user --transport stdio \
+    --env "PUKIWIKI_API_URL=$pkw_url" --env "PUKIWIKI_API_KEY=$pkw_key" \
+    -- "$pkw_node" "$pkw_server"
+)
+```
+
+Windows（PowerShell）：
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  if (-not (Test-Path -LiteralPath './server.mjs' -PathType Leaf)) {
+    throw 'pukiwiki-mcpフォルダで実行してください'
+  }
+  $pkwNode = (Get-Command node -CommandType Application).Source
+  $pkwServer = (Resolve-Path -LiteralPath './server.mjs').Path
+  $pkwUrl = Read-Host 'API URL'
+  $pkwSecret = Read-Host 'APIキー' -AsSecureString
+  $pkwKey = ([System.Net.NetworkCredential]::new('', $pkwSecret)).Password
+  if (-not $pkwUrl -or -not $pkwKey) { throw 'API URLとキーは必須です' }
+  claude mcp add pukiwiki --scope user --transport stdio `
+    --env "PUKIWIKI_API_URL=$pkwUrl" --env "PUKIWIKI_API_KEY=$pkwKey" `
+    -- "$pkwNode" "$pkwServer"
+}
+```
+
+この手順ではキーを `~/.claude.json`（Windowsではユーザープロファイル内の `.claude.json`）に平文で保存します。`.env` は不要です。これはClaude Codeの設定であり、Claude Desktopの通常のチャットで使うMCPB拡張とは別です。macOS専用の `run.sh` やキーチェーンは必須ではありません。キーチェーン等によるキー保管方法と、user/local/projectという利用範囲は別の設定です。
+
+添付を保存・アップロードする場合は、登録コマンドの `--` より前に `--env "PUKIWIKI_FILES_DIR=実在する添付用フォルダの絶対パス"` を追加してください。キーを再発行した場合は、PC側の登録キーも更新します。
+
+#### 以前の設定から移す場合
+
+同名の登録がある場合は、正常に接続できる設定のAPI URL・キー・コマンド・引数・添付用フォルダを引き継いでください。localスコープや `.mcp.json` の同名定義が残ると、userスコープより優先されます。別のWikiへの接続設定は削除しません。
+
+Claude Codeに次のように依頼することもできます。APIキーを会話本文へ貼り付ける必要はありません。
+
+> 現在の正常なpukiwiki MCP設定を、接続情報を変えずにuserスコープへ移してください。競合する同名のlocal/project設定だけを整理し、他のMCP設定は保持してください。キーを出力せず、別の作業フォルダからも接続できることを確認してください。
+
+設定後はClaude Codeのセッションを起動し直し、`/mcp` で接続を確認します。OSの再起動は不要です。別のPCには、そのPCで改めて登録します。**ユーザースコープへの登録が、別のPCへ自動反映されるわけではありません。**
+
+上記の登録・接続はmacOSで検証しています。Windows / Linuxの実機検証とAndroid対応は現時点では行っていません。
+
+### その他のMCPクライアント：設定ファイルから起動する
+
+クライアントの対応形式に合わせて次の項目を追加します。Claude Desktopを手動設定する場合は `claude_desktop_config.json` を使います。以下は構造を示す例です。パス・URL・キーは実際の値への置き換えが必要で、そのままでは接続できません。Claude Codeには上のユーザースコープ手順を使ってください。
 
 ```json
 {
